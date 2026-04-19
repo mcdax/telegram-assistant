@@ -1,0 +1,11 @@
+services:
+  telegram-assistant:
+    build: .
+    image: telegram-assistant:latest
+    container_name: telegram-assistant
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    stdin_open: true
+    tty: true
