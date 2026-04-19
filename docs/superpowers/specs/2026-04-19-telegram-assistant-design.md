@@ -84,7 +84,7 @@ class Module(Protocol):
 1. Parse CLI args (`--config`, `--state`, defaults: `./config.toml`, `./state.toml`).
 2. Load config. Validate required sections (`[telegram]`, `[llm]`, `[modules]`).
 3. Connect Telethon (interactive first-run login; subsequent runs use the session file).
-4. Instantiate each module listed under `[modules]` with `enabled = true`. Collect their markers into `marker_registry`. Register their handlers on `event_bus`.
+4. Instantiate each module listed under `[modules]` with `enabled = true`. For each module, read its `markers` sub-table (falling back to code-level defaults for unset keys) and collect the resulting triggers into `marker_registry`. Reject the config on duplicate trigger strings across modules. Register handlers on `event_bus`.
 5. Start the event loop.
 
 ## 4. Built-in modules
@@ -97,15 +97,15 @@ class Module(Protocol):
 - `on_incoming_message` — runs the drafting pipeline if effective auto-draft is `on` for the chat (§4.1.4).
 - `on_draft_update` — for three markers.
 
-**Markers registered:**
+**Markers registered:** (internal names; actual trigger strings are user-configurable — see §5.1 `[modules.drafting.markers]`.)
 
-| Marker       | Priority | Action                                                            |
-|--------------|----------|-------------------------------------------------------------------|
-| `/auto on`   | 100      | Enable auto-draft for this chat.                                  |
-| `/auto off`  | 100      | Disable auto-draft for this chat.                                 |
-| `/draft`     | 50       | Run drafting pipeline with remainder as extra user instruction.   |
+| Internal name | Default trigger | Priority | Action                                                          |
+|---------------|-----------------|----------|-----------------------------------------------------------------|
+| `auto_on`     | `/auto on`      | 100      | Enable auto-draft for this chat.                                |
+| `auto_off`    | `/auto off`     | 100      | Disable auto-draft for this chat.                               |
+| `draft`       | `/draft`        | 50       | Run drafting pipeline with remainder as extra user instruction. |
 
-Higher priority wins. Exact match (case-insensitive, whitespace-trimmed) is required for `/auto on` and `/auto off` — garbage suffixes are ignored (logged).
+Higher priority wins. Exact match (case-insensitive, whitespace-trimmed) is required for `auto_on` and `auto_off` — garbage suffixes are ignored (logged). Priorities are code-level defaults and not currently configurable.
 
 #### 4.1.1 `/draft` flow
 
@@ -166,11 +166,11 @@ Per chat: `config.modules.drafting.chats.<id>.system_prompt` if set, else `confi
 
 **Events handled:** `on_draft_update` only.
 
-**Markers registered:**
+**Markers registered:** (internal names; actual trigger strings are user-configurable — see §5.1 `[modules.correcting.markers]`.)
 
-| Marker | Priority | Action                                  |
-|--------|----------|-----------------------------------------|
-| `/fix` | 70       | Rewrite the remainder using the LLM.    |
+| Internal name | Default trigger | Priority | Action                               |
+|---------------|-----------------|----------|--------------------------------------|
+| `fix`         | `/fix`          | 70       | Rewrite the remainder using the LLM. |
 
 **Flow:**
 
@@ -246,6 +246,13 @@ enrichment_url = "https://example.internal/context"
 enrichment_auth_header = "Bearer ..."   # optional
 enrichment_timeout_s = 10
 
+# Trigger strings for this module's markers. Keys are stable internal names.
+# Omit any key to accept its default.
+[modules.drafting.markers]
+draft    = "/draft"
+auto_on  = "/auto on"
+auto_off = "/auto off"
+
 # Optional per-chat overrides for drafting.
 [modules.drafting.chats."12345"]
 system_prompt = "..."
@@ -254,6 +261,9 @@ last_n = 50
 [modules.correcting]
 enabled = true
 system_prompt = """Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."""
+
+[modules.correcting.markers]
+fix = "/fix"
 
 [modules.media_reply]
 enabled = true
@@ -269,7 +279,7 @@ backend = "yt_dlp"
 
 Notes:
 - TOML bare keys allow digits; quote negative (supergroup/channel) IDs: `[modules.drafting.chats."-1001234567890"]`.
-- The `[markers]` table from earlier drafts is gone — markers are owned by the modules that register them.
+- Markers are owned by the modules that register them. Each module exposes its markers under `[modules.<name>.markers]`; unset keys fall back to code-level defaults. Marker strings must be unique across all enabled modules — collisions are rejected at config load (§3.4).
 
 ### 5.2 `state.toml` (app-managed)
 
@@ -322,9 +332,9 @@ Modules implement `reconfigure` for safe in-place updates; those that can't, doc
 ## 8. Testing
 
 - **Unit (no network, no LLM):**
-  - Core: `marker_registry` precedence + exact-match semantics; `event_bus` ordering; `loop_protection`; `runtime_state` atomic write and namespacing; `config_loader` reload.
-  - `drafting`: marker parsing (`/draft`, `/auto on`, `/auto off`), effective-state resolution, auto-draft skip for outgoing messages, enrichment mocked via `aioresponses`, LLM via Pydantic AI `TestModel`.
-  - `correcting`: marker parsing, empty remainder ignored, LLM via `TestModel`.
+  - Core: `marker_registry` precedence + exact-match semantics; duplicate-trigger rejection at load; `event_bus` ordering; `loop_protection`; `runtime_state` atomic write and namespacing; `config_loader` reload.
+  - `drafting`: marker parsing (default and user-overridden trigger strings for `draft`, `auto_on`, `auto_off`), effective-state resolution, auto-draft skip for outgoing messages, enrichment mocked via `aioresponses`, LLM via Pydantic AI `TestModel`.
+  - `correcting`: marker parsing with default and overridden trigger, empty remainder ignored, LLM via `TestModel`.
   - `media_reply`: regex matching, chat whitelist, handler order, backend stubbed.
 - **Integration:**
   - Fake Telethon client fixture that emits `UpdateDraftMessage` and `UpdateNewMessage`; assert correct module handles the event and the expected Telegram call is made.
@@ -359,5 +369,5 @@ No SQLite, no database. Persistent files: `config.toml`, `state.toml`, Telethon 
 - Sender-identifier format sent to the enrichment endpoint (username / display name / Telegram ID).
 - Packaging: single entrypoint (`uv run telegram-assistant`), systemd example, log destination.
 - `yt-dlp` invocation boundary: subprocess vs. Python API; cookie/auth handling for Instagram is a known pain point — may require per-handler cookies file referenced from config.
-- Default priorities: whether `/auto` should stay above `/draft` and `/fix` (currently 100 > 70 > 50).
+- Default priorities: whether `/auto` should stay above `/draft` and `/fix` (currently 100 > 70 > 50). Priorities remain code-level for now; revisit if user feedback asks for config-level override.
 - Whether to add a `/help` marker that lists all registered markers (probably yes; trivial and high-value).
