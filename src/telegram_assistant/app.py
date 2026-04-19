@@ -6,6 +6,7 @@ Routing:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,21 @@ class App:
 
     async def drain(self) -> None:
         await self._bus.drain()
+
+    async def run(self, modules_cfg: dict[str, dict[str, Any]]) -> None:
+        """Drive the bus from external client events until cancelled.
+
+        When used with a real TelethonTelegramClient, `tg` is expected to
+        have been constructed with on_incoming/on_draft pointing at
+        self.inject_incoming / self.inject_draft_update.
+        """
+        await self.start(modules_cfg)
+        await self._tg.connect()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await self._tg.disconnect()
+            await self.stop()
 
 
 class _LoopProtectingClient:
