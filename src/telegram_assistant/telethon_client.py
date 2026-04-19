@@ -38,11 +38,21 @@ class TelethonTelegramClient:
         self._on_draft = on_draft
 
     async def connect(self) -> None:
+        log.info("starting Telethon client (interactive login on first run)")
         await self._client.start()  # interactive login on first run
+        me = await self._client.get_me()
+        log.info(
+            "logged in as id=%s username=%s phone=%s",
+            getattr(me, "id", None), getattr(me, "username", None), getattr(me, "phone", None),
+        )
 
         @self._client.on(_events.NewMessage(incoming=True))
         async def _(event):
             msg = await self._to_message(event)
+            log.debug(
+                "telethon NewMessage chat=%s sender=%s id=%s text_len=%d",
+                msg.chat_id, msg.sender, msg.message_id, len(msg.text),
+            )
             await self._on_incoming(IncomingMessage(msg))
 
         @self._client.on(_events.Raw())
@@ -52,11 +62,15 @@ class TelethonTelegramClient:
                 try:
                     chat_id = self._peer_to_chat_id(update.peer)
                     text = getattr(update.draft, "message", "") or ""
+                    log.debug(
+                        "telethon UpdateDraftMessage chat=%s text_len=%d", chat_id, len(text)
+                    )
                     await self._on_draft(DraftUpdate(chat_id=chat_id, text=text))
                 except Exception as e:
                     log.warning("failed to translate draft update: %s", e)
 
     async def disconnect(self) -> None:
+        log.info("disconnecting Telethon client")
         await self._client.disconnect()
 
     async def send_message(
@@ -66,6 +80,10 @@ class TelethonTelegramClient:
         reply_to: int | None = None,
         files: list[Path] | None = None,
     ) -> None:
+        log.debug(
+            "send_message chat=%s files=%d has_text=%s reply_to=%s",
+            chat_id, len(files or []), text is not None, reply_to,
+        )
         if files:
             await self._client.send_file(
                 chat_id, file=[str(p) for p in files], caption=text or None, reply_to=reply_to
@@ -74,6 +92,7 @@ class TelethonTelegramClient:
             await self._client.send_message(chat_id, text, reply_to=reply_to)
 
     async def write_draft(self, chat_id: int, text: str) -> None:
+        log.debug("telethon SaveDraftRequest chat=%s text_len=%d", chat_id, len(text))
         peer = await self._client.get_input_entity(chat_id)
         await self._client(SaveDraftRequest(peer=peer, message=text))
 

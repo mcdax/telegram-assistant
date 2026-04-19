@@ -33,13 +33,19 @@ class CorrectingModule:
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None
         text = match.remainder.strip()
+        self._ctx.log.debug(
+            "on_draft_update chat=%s marker=%s remainder_len=%d",
+            event.chat_id, match.marker.name, len(text),
+        )
         if not text:
             self._ctx.log.info("/fix with empty remainder — ignored")
             return
         agent = self._ctx.llm.agent(self._ctx.config["system_prompt"])
+        self._ctx.log.debug("correcting LLM call chat=%s input_len=%d", event.chat_id, len(text))
         try:
             output = await self._ctx.llm.run(agent, text)
         except Exception as e:
-            self._ctx.log.warning("correcting failed: %s", e)
+            self._ctx.log.warning("correcting failed chat=%s: %s", event.chat_id, e)
             return
+        self._ctx.log.debug("correcting done chat=%s output_len=%d", event.chat_id, len(output))
         await self._ctx.tg.write_draft(event.chat_id, output)

@@ -24,8 +24,16 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _run(args: argparse.Namespace) -> None:
-    logging.basicConfig(level=args.log_level.upper())
+    logging.basicConfig(
+        level=args.log_level.upper(),
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     cfg = load_config(args.config)
+    logging.info(
+        "starting telegram-assistant config=%s state=%s log_level=%s",
+        args.config, args.state, args.log_level.upper(),
+    )
     http = aiohttp.ClientSession()
 
     app_holder: dict[str, App] = {}

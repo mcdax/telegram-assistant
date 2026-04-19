@@ -67,14 +67,21 @@ class DraftingModule:
         assert self._ctx is not None
         msg = event.message
         if msg.outgoing:
+            self._ctx.log.debug("skip incoming chat=%s: outgoing", msg.chat_id)
             return
         if not self._auto_on(msg.chat_id):
+            self._ctx.log.debug("skip incoming chat=%s: auto-draft off", msg.chat_id)
             return
+        self._ctx.log.debug("auto-drafting for chat=%s", msg.chat_id)
         await self._draft(chat_id=msg.chat_id, chat_title=msg.sender, instruction="")
 
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None
         name = match.marker.name
+        self._ctx.log.debug(
+            "on_draft_update chat=%s marker=%s remainder=%r",
+            event.chat_id, name, match.remainder[:80],
+        )
         if name == "auto_on":
             await self._set_auto(event.chat_id, True)
         elif name == "auto_off":
@@ -108,14 +115,21 @@ class DraftingModule:
     async def _draft(self, *, chat_id: int, chat_title: str, instruction: str) -> None:
         assert self._ctx is not None
         system_prompt, last_n = self._resolve_for_chat(chat_id)
+        self._ctx.log.debug(
+            "draft chat=%s last_n=%d instruction=%r system_prompt_len=%d",
+            chat_id, last_n, instruction[:80], len(system_prompt),
+        )
         history = await self._ctx.tg.fetch_history(chat_id, last_n)
+        self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
         enrichment = await self._enricher.fetch(chat_id, chat_title, history)
+        self._ctx.log.debug("enrichment chat=%s len=%d", chat_id, len(enrichment))
         pipeline = Pipeline(llm=self._ctx.llm, system_prompt=system_prompt)
         try:
             output = await pipeline.run(
                 enrichment=enrichment, history=history, instruction=instruction
             )
         except Exception as e:
-            self._ctx.log.warning("drafting failed: %s", e)
+            self._ctx.log.warning("drafting failed chat=%s: %s", chat_id, e)
             return
+        self._ctx.log.debug("draft generated chat=%s len=%d", chat_id, len(output))
         await self._ctx.tg.write_draft(chat_id, output)

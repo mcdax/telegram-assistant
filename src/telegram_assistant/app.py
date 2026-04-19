@@ -71,17 +71,32 @@ class App:
             await m.shutdown()
 
     async def inject_incoming(self, event: IncomingMessage) -> None:
+        msg = event.message
+        log.debug(
+            "inject_incoming chat=%s sender=%s outgoing=%s text=%r",
+            msg.chat_id, msg.sender, msg.outgoing, _truncate(msg.text),
+        )
         for m in self._modules:
             await self._bus.dispatch(
-                "incoming", m.name, chat_id=event.message.chat_id, payload=event
+                "incoming", m.name, chat_id=msg.chat_id, payload=event
             )
 
     async def inject_draft_update(self, event: DraftUpdate) -> None:
+        log.debug(
+            "inject_draft_update chat=%s text=%r",
+            event.chat_id, _truncate(event.text),
+        )
         if self._loop_protect.is_our_write(event.chat_id, event.text):
+            log.debug("draft update matches our last write for chat=%s — ignored", event.chat_id)
             return
         match = self._registry.resolve(event.text)
         if match is None:
+            log.debug("draft text does not contain any registered marker — ignored")
             return
+        log.debug(
+            "marker resolved: module=%s name=%s remainder=%r",
+            match.module, match.marker.name, _truncate(match.remainder),
+        )
         await self._bus.dispatch(
             "draft", match.module, chat_id=event.chat_id, payload=(event, match),
         )
@@ -105,6 +120,12 @@ class App:
             await self.stop()
 
 
+def _truncate(text: str, limit: int = 120) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
 class _LoopProtectingClient:
     """Wraps a TelegramClient to record our own draft writes for loop protection."""
 
@@ -113,6 +134,7 @@ class _LoopProtectingClient:
         self._lp = lp
 
     async def write_draft(self, chat_id: int, text: str) -> None:
+        log.debug("write_draft chat=%s text=%r", chat_id, _truncate(text))
         self._lp.record(chat_id, text)
         await self._inner.write_draft(chat_id, text)
 

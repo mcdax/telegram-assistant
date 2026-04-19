@@ -30,8 +30,10 @@ class Enricher:
 
     async def fetch(self, chat_id: int, chat_title: str, messages: Iterable[Message]) -> str:
         if not self._url:
+            log.debug("enrichment skipped: no url configured")
             return ""
 
+        messages_list = list(messages)
         payload = {
             "chat_id": chat_id,
             "chat_title": chat_title,
@@ -41,10 +43,14 @@ class Enricher:
                     "timestamp": m.timestamp.isoformat(),
                     "text": m.text,
                 }
-                for m in messages
+                for m in messages_list
             ],
         }
         headers = {"Authorization": self._auth_header} if self._auth_header else {}
+        log.debug(
+            "enrichment POST url=%s chat=%s messages=%d",
+            self._url, chat_id, len(messages_list),
+        )
 
         try:
             async with self._http.post(
@@ -57,7 +63,9 @@ class Enricher:
                     log.warning("enrichment returned %s", resp.status)
                     return ""
                 data = await resp.json()
-                return str(data.get("context", ""))
+                context = str(data.get("context", ""))
+                log.debug("enrichment OK chat=%s context_len=%d", chat_id, len(context))
+                return context
         except asyncio.TimeoutError:
             log.warning("enrichment timed out after %ss", self._timeout)
             return ""

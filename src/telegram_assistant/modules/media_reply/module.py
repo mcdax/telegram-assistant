@@ -60,6 +60,9 @@ class MediaReplyModule:
         assert self._ctx is not None
         msg = event.message
         if msg.chat_id not in self._chats:
+            self._ctx.log.debug(
+                "skip incoming chat=%s: not in media_reply whitelist", msg.chat_id
+            )
             return
         match_url: str | None = None
         picked: Handler | None = None
@@ -70,15 +73,26 @@ class MediaReplyModule:
                 picked = h
                 break
         if picked is None or match_url is None:
+            self._ctx.log.debug(
+                "no URL handler matched incoming in chat=%s", msg.chat_id
+            )
             return
 
+        self._ctx.log.debug(
+            "handler=%s matched url=%s chat=%s", picked.name, match_url, msg.chat_id
+        )
         with tempfile.TemporaryDirectory(prefix="tga-media-") as td:
             td_path = Path(td)
+            self._ctx.log.debug("download starting handler=%s url=%s", picked.name, match_url)
             try:
                 file_path = await picked.backend.download(match_url, td_path)
             except DownloadError as e:
                 self._ctx.log.warning("download failed (%s): %s", picked.name, e)
                 return
+            size = file_path.stat().st_size if file_path.exists() else -1
+            self._ctx.log.debug(
+                "download complete file=%s bytes=%d — sending reply", file_path.name, size
+            )
             await self._ctx.tg.send_message(
                 chat_id=msg.chat_id,
                 reply_to=msg.message_id,
