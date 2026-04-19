@@ -1,10 +1,13 @@
 """Loads modules listed in config into a live set plus their markers."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from .markers import MarkerRegistry
 from .module import Module, ModuleContext
+
+log = logging.getLogger(__name__)
 
 
 class UnknownModuleError(KeyError):
@@ -41,7 +44,11 @@ class ModuleLoader:
                 raise UnknownModuleError(f"unknown module: {name}")
             instance: Module = cls()
             ctx = context_factory(name, cfg)
-            await instance.init(ctx)
+            try:
+                await instance.init(ctx)
+            except Exception as exc:
+                log.error("module %r init failed, skipping: %s", name, exc)
+                continue
             registry.register(name, instance.markers())
             loaded.append(instance)
         return loaded

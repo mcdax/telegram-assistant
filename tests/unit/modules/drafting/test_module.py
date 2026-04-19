@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import aiohttp
 import pytest
@@ -12,7 +13,7 @@ from telegram_assistant.events import DraftUpdate, IncomingMessage
 from telegram_assistant.markers import MarkerMatch
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.drafting.module import DraftingModule
-from telegram_assistant.state import RuntimeState
+from telegram_assistant.state import RuntimeState, StateWriteError
 from tests.fakes.llm import fake_llm
 from tests.fakes.telegram import FakeTelegramClient, make_message
 
@@ -163,6 +164,17 @@ async def test_draft_marker_runs_pipeline(tmp_path: Path):
     match_with_remainder = MarkerMatch(module="drafting", marker=match.marker, remainder="ask X")
     await mod.on_draft_update(DraftUpdate(chat_id=1, text="/draft ask X"), match_with_remainder)
     assert tg.drafts[1] == "GENERATED"
+    await ctx.http.close()
+
+
+async def test_set_auto_writes_failure_draft_on_state_write_error(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, _module_config())
+    await mod.init(ctx)
+    match = _find_marker(mod, "auto_on")
+    with patch("os.replace", side_effect=OSError("disk full")):
+        await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto on"), match)
+    assert tg.drafts[1] == "✗ state write failed"
     await ctx.http.close()
 
 

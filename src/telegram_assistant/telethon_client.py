@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 from telethon import TelegramClient as _Telethon
 from telethon import events as _events
 from telethon.tl.functions.messages import SaveDraftRequest
+from telethon.utils import get_peer_id
 
 from .events import DraftUpdate, IncomingMessage, Message
 
@@ -111,9 +112,4 @@ class TelethonTelegramClient:
 
     @staticmethod
     def _peer_to_chat_id(peer) -> int:
-        # Telethon peers come in user/chat/channel variants; fall back to int(str) if unknown.
-        for attr in ("user_id", "chat_id", "channel_id"):
-            v = getattr(peer, attr, None)
-            if v is not None:
-                return int(v) if attr == "user_id" else -int(v)
-        raise ValueError(f"cannot extract chat id from peer {peer!r}")
+        return get_peer_id(peer)

@@ -101,6 +101,49 @@ async def test_markers_collected_into_registry(tmp_path: Path):
     await http.close()
 
 
+async def test_failing_module_init_is_isolated(tmp_path: Path, monkeypatch):
+    """A module whose init() raises must not prevent other modules from loading."""
+    from telegram_assistant import module_loader
+
+    class _BrokenModule:
+        name = "broken"
+
+        async def init(self, ctx) -> None:
+            raise RuntimeError("misconfigured!")
+
+        async def shutdown(self) -> None:
+            pass
+
+        def markers(self):
+            return []
+
+    original_known = module_loader._known_modules
+
+    def _patched_known():
+        result = original_known()
+        result["broken"] = _BrokenModule
+        return result
+
+    monkeypatch.setattr(module_loader, "_known_modules", _patched_known)
+
+    make, http = await _build_ctx_factory(tmp_path)
+    loader = ModuleLoader()
+    registry = MarkerRegistry()
+    loaded = await loader.load(
+        {
+            "broken": {"enabled": True},
+            "correcting": {"enabled": True, "system_prompt": "x"},
+        },
+        registry,
+        make,
+    )
+    # broken module is absent; correcting loaded fine
+    names = {m.name for m in loaded}
+    assert "broken" not in names
+    assert "correcting" in names
+    await http.close()
+
+
 async def test_duplicate_marker_across_modules_raises(tmp_path: Path):
     make, http = await _build_ctx_factory(tmp_path)
     loader = ModuleLoader()

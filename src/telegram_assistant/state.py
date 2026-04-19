@@ -4,12 +4,19 @@ The app is the sole writer. Writes are atomic (temp + rename).
 """
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+
+log = logging.getLogger(__name__)
+
+
+class StateWriteError(OSError):
+    """Raised when the in-memory state change could not be persisted to disk."""
 
 
 class RuntimeState:
@@ -41,7 +48,11 @@ class RuntimeState:
 
     def _set(self, module: str, bucket: str, key: str, value: Any) -> None:
         self._data.setdefault(module, {}).setdefault(bucket, {})[key] = value
-        self._write()
+        try:
+            self._write()
+        except OSError as exc:
+            log.error("state write failed: %s", exc)
+            raise StateWriteError(str(exc)) from exc
 
 
 class ModuleState:

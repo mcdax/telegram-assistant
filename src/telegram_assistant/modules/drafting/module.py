@@ -6,6 +6,7 @@ from typing import Any
 from telegram_assistant.events import DraftUpdate, IncomingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
+from telegram_assistant.state import StateWriteError
 
 from .enricher import Enricher
 from .pipeline import Pipeline
@@ -83,9 +84,12 @@ class DraftingModule:
 
     async def _set_auto(self, chat_id: int, on: bool) -> None:
         assert self._ctx is not None
-        self._ctx.state.set("auto_draft", str(chat_id), on)
-        word = "enabled" if on else "disabled"
-        text = f"✓ Auto-draft {word} for this chat"
+        try:
+            self._ctx.state.set("auto_draft", str(chat_id), on)
+            word = "enabled" if on else "disabled"
+            text = f"✓ Auto-draft {word} for this chat"
+        except StateWriteError:
+            text = "✗ state write failed"
         await self._ctx.tg.write_draft(chat_id, text)
 
     def _auto_on(self, chat_id: int) -> bool:

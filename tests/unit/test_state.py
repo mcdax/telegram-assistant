@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
-from telegram_assistant.state import RuntimeState
+import pytest
+
+from telegram_assistant.state import RuntimeState, StateWriteError
 
 
 def test_get_default_when_absent(tmp_path: Path):
@@ -47,3 +50,13 @@ def test_atomic_write_uses_temp_file(tmp_path: Path):
 def test_missing_file_loads_empty(tmp_path: Path):
     state = RuntimeState(tmp_path / "does_not_exist.toml")
     assert state.for_module("drafting").get("auto_draft", "1", default="X") == "X"
+
+
+def test_write_failure_raises_state_write_error_and_keeps_memory(tmp_path: Path):
+    state = RuntimeState(tmp_path / "state.toml")
+    ns = state.for_module("drafting")
+    with patch("os.replace", side_effect=OSError("disk full")):
+        with pytest.raises(StateWriteError):
+            ns.set("auto_draft", "99", True)
+    # In-memory change is preserved despite the write failure.
+    assert ns.get("auto_draft", "99", default=None) is True
