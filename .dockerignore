@@ -1,0 +1,26 @@
+# Secrets and local state
+config.toml
+state.toml
+.env
+*.session
+*.session-journal
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Git / editor / docs / tests not needed in the image
+.git/
+.gitignore
+.vscode/
+.idea/
+docs/
+tests/

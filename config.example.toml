@@ -1,0 +1,115 @@
+# telegram-assistant — configuration
+#
+# This file is consumed at startup. On first run inside the container, an
+# empty /data volume causes the entrypoint to seed this template for you;
+# fill in the placeholders below and restart.
+#
+# Secret values (api_id, api_hash, LLM API keys, enrichment auth header)
+# should be treated as credentials — do not commit this file to version
+# control.
+
+[telegram]
+# Your Telegram API credentials. Obtain them at https://my.telegram.org
+# → API development tools. One pair per Telegram account.
+api_id = 0
+api_hash = "YOUR_API_HASH"
+
+# Telethon stores the login session under this name (e.g. "assistant.session")
+# next to the config file. Keep it stable across restarts to avoid re-login.
+session = "assistant"
+
+
+[llm]
+# Any model slug pydantic-ai recognises: "anthropic:claude-sonnet-4-6",
+# "openai:gpt-4o", "google-gla:gemini-1.5-pro", "ollama:llama3.1", etc.
+# The matching API key is read from the provider's environment variable
+# (for example ANTHROPIC_API_KEY) — put it in .env, not here.
+model = "anthropic:claude-sonnet-4-6"
+
+# Per-call timeout. Generated drafts that exceed this are silently skipped
+# and logged; your Telegram input stays untouched.
+timeout_s = 30
+
+
+# ---------- Module: drafting ----------
+# Drafts replies in your voice using the chat history, an optional external
+# enrichment endpoint (calendar/email/notes), and the LLM. Owns the /draft
+# marker and the /auto on|off runtime toggles for auto-drafting.
+[modules.drafting]
+enabled = true
+
+# Baseline system prompt for reply drafts. Can be overridden per chat
+# under [modules.drafting.chats."<chat_id>"].
+default_system_prompt = "You are drafting a reply in the user's voice. Casual, concise, matches the conversation's tone."
+
+# Number of recent messages fetched and shown to the LLM. 20 is a good
+# default; bump it per-chat for long-running threads.
+last_n = 20
+
+# Initial whitelist of chat IDs where incoming messages trigger auto-draft.
+# This is a seed only — the runtime truth lives in state.toml and is
+# toggled with /auto on / /auto off in-chat.
+auto_draft_chats = []
+
+# Optional external enrichment service. When set, each draft POSTs the
+# last-N messages and uses the response as extra context. Leave empty to
+# draft from chat history alone.
+enrichment_url = ""
+enrichment_auth_header = ""
+enrichment_timeout_s = 10
+
+# Trigger strings for this module's markers. Keys are the stable internal
+# names; values are whatever you want to type in your Telegram input.
+[modules.drafting.markers]
+draft    = "/draft"
+auto_on  = "/auto on"
+auto_off = "/auto off"
+
+# Optional per-chat overrides. Positive IDs (users) use bare keys; negative
+# IDs (supergroups/channels) MUST be quoted.
+# [modules.drafting.chats."12345"]
+# system_prompt = "Professional tone. Keep replies brief."
+# last_n = 50
+#
+# [modules.drafting.chats."-1001234567890"]
+# system_prompt = "Team channel — be terse and technical."
+
+
+# ---------- Module: correcting ----------
+# Rewrites your own text for grammar / spelling / punctuation on the /fix
+# marker. No chat history, no enrichment.
+[modules.correcting]
+enabled = true
+system_prompt = "Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."
+
+[modules.correcting.markers]
+fix = "/fix"
+
+
+# ---------- Module: media_reply ----------
+# When an incoming message contains a URL matching a handler's regex, the
+# module downloads the media with the configured backend and replies with
+# the file. Requires ffmpeg for most sites (already bundled in the image).
+[modules.media_reply]
+enabled = true
+
+# Safety default — an empty whitelist means the module does nothing. Add
+# the chat IDs where you want URL-aware replies.
+chats = []
+
+# "reply" = send the media as a reply to the original message. "draft" is
+# reserved for a future release.
+send_as = "reply"
+download_timeout_s = 60
+
+# One handler block per URL family. Add more by repeating the section.
+[[modules.media_reply.handlers]]
+name = "instagram"
+pattern = 'https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/[\w-]+'
+backend = "yt_dlp"
+
+# Example: add TikTok too.
+# [[modules.media_reply.handlers]]
+# name = "tiktok"
+# pattern = 'https?://(?:www\.)?tiktok\.com/@[\w.-]+/video/\d+'
+# backend = "yt_dlp"
