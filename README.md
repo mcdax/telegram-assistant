@@ -18,6 +18,62 @@ Modular Telegram userbot. See `docs/superpowers/specs/2026-04-19-telegram-assist
 uv run pytest
 ```
 
+## Docker
+
+A multi-stage `Dockerfile` and `docker-compose.yml` are provided for single-host deployment. `ffmpeg` is bundled so `yt-dlp` works on all sites supported by the `media_reply` module.
+
+### First-time setup
+
+1. Copy secret templates:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Fill in the LLM provider API key that matches `[llm].model` in your config (e.g. `ANTHROPIC_API_KEY`).
+
+2. Build the image:
+
+   ```bash
+   docker compose build
+   ```
+
+3. Bootstrap the config template into `./data/`:
+
+   ```bash
+   docker compose run --rm telegram-assistant
+   ```
+
+   The container writes `./data/config.toml` from the commented template, prints an edit instruction, and exits with code 2.
+
+4. Edit `./data/config.toml` — at minimum fill in `[telegram].api_id` / `api_hash` (from https://my.telegram.org) and any module-specific settings you care about (auto-draft whitelist, media-reply chats, enrichment URL).
+
+5. Telethon login — interactive, one-time:
+
+   ```bash
+   docker compose run --rm telegram-assistant
+   ```
+
+   Telethon prompts for your phone number, login code, and (if enabled) 2FA password. The resulting `assistant.session` is saved to `./data/` and reused from then on. Ctrl-C once you see the assistant connect.
+
+6. Normal operation — detached:
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f
+   ```
+
+### Updates
+
+Pull / edit source, then:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+`./data/` is untouched; config, state, and session persist across image rebuilds.
+
 ## Manual smoke flow
 
 1. In your Telegram client, open any chat and type `/draft`. Pause briefly.
