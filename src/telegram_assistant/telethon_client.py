@@ -5,7 +5,6 @@ DraftUpdate types, and map our API methods onto Telethon calls.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import timezone
 from pathlib import Path
