@@ -88,14 +88,30 @@ auto_draft_off = "/auto_draft off"
 
 
 # ---------- Module: correcting ----------
-# Rewrites your own text for grammar / spelling / punctuation on the /fix
-# marker. No chat history, no enrichment.
+# Rewrites your text for grammar / spelling / punctuation.
+#   /fix <text>            — one-shot: rewrites the remainder of the current draft.
+#   /auto_fix on | off     — per-chat toggle. When on, EVERY draft you type in
+#                            this chat is rewritten as you type. Tradeoff:
+#                            your input field visibly updates after a short
+#                            LLM roundtrip.
+#   /auto_fix_sent on|off  — per-chat toggle. When on, every message you SEND
+#                            in this chat is edited post-send via Telegram's
+#                            edit API. Tradeoff: the recipient briefly sees
+#                            the original and then the corrected version
+#                            with an "edited" marker.
+# Both toggles persist in state.toml under [correcting.auto_fix] and
+# [correcting.auto_fix_sent]. They are independent — you can enable any
+# combination per chat.
 [modules.correcting]
 enabled = true
 system_prompt = "Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."
 
 [modules.correcting.markers]
-fix = "/fix"
+fix               = "/fix"
+auto_fix_on       = "/auto_fix on"
+auto_fix_off      = "/auto_fix off"
+auto_fix_sent_on  = "/auto_fix_sent on"
+auto_fix_sent_off = "/auto_fix_sent off"
 
 
 # ---------- Module: media_reply ----------

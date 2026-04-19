@@ -1,8 +1,12 @@
 """Application glue.
 
 Routing:
-- DraftUpdate → marker_registry resolves winning module → on_draft_update.
-- IncomingMessage → broadcast to all modules implementing on_incoming_message.
+- DraftUpdate with a matching marker → winning module's on_draft_update.
+- DraftUpdate with no matching marker → broadcast to every module's
+  on_plain_draft_update (for features like pre-send autofix).
+- IncomingMessage → broadcast to every module's on_incoming_message.
+- OutgoingMessage → broadcast to every module's on_outgoing_message
+  (for post-send features like autofixsent).
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ from typing import Any
 import aiohttp
 
 from .event_bus import EventBus
-from .events import DraftUpdate, IncomingMessage
+from .events import DraftUpdate, IncomingMessage, OutgoingMessage
 from .llm import LLMFactory
 from .loop_protection import LoopProtection
 from .markers import MarkerRegistry
@@ -60,11 +64,15 @@ class App:
         for m in self._modules:
             if hasattr(m, "on_incoming_message"):
                 self._bus.subscribe("incoming", m.name, m.on_incoming_message)
+            if hasattr(m, "on_outgoing_message"):
+                self._bus.subscribe("outgoing", m.name, m.on_outgoing_message)
             if hasattr(m, "on_draft_update"):
                 async def _draft_handler(payload, _m=m):
                     ev, mt = payload
                     await _m.on_draft_update(ev, mt)
                 self._bus.subscribe("draft", m.name, _draft_handler)
+            if hasattr(m, "on_plain_draft_update"):
+                self._bus.subscribe("plain_draft", m.name, m.on_plain_draft_update)
 
     async def stop(self) -> None:
         for m in self._modules:
@@ -90,16 +98,31 @@ class App:
             log.debug("draft update matches our last write for chat=%s — ignored", event.chat_id)
             return
         match = self._registry.resolve(event.text)
-        if match is None:
-            log.debug("draft text does not contain any registered marker — ignored")
+        if match is not None:
+            log.debug(
+                "marker resolved: module=%s name=%s remainder=%r",
+                match.module, match.marker.name, _truncate(match.remainder),
+            )
+            await self._bus.dispatch(
+                "draft", match.module, chat_id=event.chat_id, payload=(event, match),
+            )
             return
+        log.debug("no marker matched — broadcasting to plain_draft subscribers")
+        for m in self._modules:
+            await self._bus.dispatch(
+                "plain_draft", m.name, chat_id=event.chat_id, payload=event
+            )
+
+    async def inject_outgoing(self, event: OutgoingMessage) -> None:
+        msg = event.message
         log.debug(
-            "marker resolved: module=%s name=%s remainder=%r",
-            match.module, match.marker.name, _truncate(match.remainder),
+            "inject_outgoing chat=%s sender=%s id=%s text=%r",
+            msg.chat_id, msg.sender, msg.message_id, _truncate(msg.text),
         )
-        await self._bus.dispatch(
-            "draft", match.module, chat_id=event.chat_id, payload=(event, match),
-        )
+        for m in self._modules:
+            await self._bus.dispatch(
+                "outgoing", m.name, chat_id=msg.chat_id, payload=event
+            )
 
     async def drain(self) -> None:
         await self._bus.drain()

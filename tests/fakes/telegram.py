@@ -17,9 +17,17 @@ class SentMessage:
 
 
 @dataclass
+class EditedMessage:
+    chat_id: int
+    message_id: int
+    text: str
+
+
+@dataclass
 class FakeTelegramClient:
     drafts: dict[int, str] = field(default_factory=dict)
     sent: list[SentMessage] = field(default_factory=list)
+    edits: list[EditedMessage] = field(default_factory=list)
     history: dict[int, list[Message]] = field(default_factory=dict)
 
     async def send_message(
@@ -33,6 +41,9 @@ class FakeTelegramClient:
 
     async def write_draft(self, chat_id: int, text: str) -> None:
         self.drafts[chat_id] = text
+
+    async def edit_message(self, chat_id: int, message_id: int, text: str) -> None:
+        self.edits.append(EditedMessage(chat_id, message_id, text))
 
     async def fetch_history(self, chat_id: int, n: int) -> list[Message]:
         return list(self.history.get(chat_id, []))[-n:]

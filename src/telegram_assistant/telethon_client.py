@@ -15,11 +15,12 @@ from telethon import events as _events
 from telethon.tl.functions.messages import SaveDraftRequest
 from telethon.utils import get_peer_id
 
-from .events import DraftUpdate, IncomingMessage, Message
+from .events import DraftUpdate, IncomingMessage, Message, OutgoingMessage
 
 log = logging.getLogger(__name__)
 
 OnIncoming = Callable[[IncomingMessage], Awaitable[None]]
+OnOutgoing = Callable[[OutgoingMessage], Awaitable[None]]
 OnDraft = Callable[[DraftUpdate], Awaitable[None]]
 
 
@@ -31,10 +32,12 @@ class TelethonTelegramClient:
         api_hash: str,
         session: str,
         on_incoming: OnIncoming,
+        on_outgoing: OnOutgoing,
         on_draft: OnDraft,
     ) -> None:
         self._client = _Telethon(session, api_id, api_hash)
         self._on_incoming = on_incoming
+        self._on_outgoing = on_outgoing
         self._on_draft = on_draft
 
     async def connect(self) -> None:
@@ -50,10 +53,19 @@ class TelethonTelegramClient:
         async def _(event):
             msg = await self._to_message(event)
             log.debug(
-                "telethon NewMessage chat=%s sender=%s id=%s text_len=%d",
+                "telethon NewMessage incoming chat=%s sender=%s id=%s text_len=%d",
                 msg.chat_id, msg.sender, msg.message_id, len(msg.text),
             )
             await self._on_incoming(IncomingMessage(msg))
+
+        @self._client.on(_events.NewMessage(outgoing=True))
+        async def _out(event):
+            msg = await self._to_message(event)
+            log.debug(
+                "telethon NewMessage outgoing chat=%s sender=%s id=%s text_len=%d",
+                msg.chat_id, msg.sender, msg.message_id, len(msg.text),
+            )
+            await self._on_outgoing(OutgoingMessage(msg))
 
         @self._client.on(_events.Raw())
         async def _raw(update):
@@ -95,6 +107,13 @@ class TelethonTelegramClient:
         log.debug("telethon SaveDraftRequest chat=%s text_len=%d", chat_id, len(text))
         peer = await self._client.get_input_entity(chat_id)
         await self._client(SaveDraftRequest(peer=peer, message=text))
+
+    async def edit_message(self, chat_id: int, message_id: int, text: str) -> None:
+        log.debug(
+            "telethon edit_message chat=%s id=%s text_len=%d",
+            chat_id, message_id, len(text),
+        )
+        await self._client.edit_message(chat_id, message_id, text)
 
     async def fetch_history(self, chat_id: int, n: int) -> list[Message]:
         out: list[Message] = []

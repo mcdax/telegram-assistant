@@ -21,6 +21,17 @@ class IncomingMessage:
 
 
 @dataclass(frozen=True)
+class OutgoingMessage:
+    """Emitted when the user sends a message through their own account.
+
+    Distinct from IncomingMessage so modules can handle the two flows
+    independently (e.g. post-send correction vs. auto-drafting replies).
+    """
+
+    message: Message
+
+
+@dataclass(frozen=True)
 class DraftUpdate:
     chat_id: int
     text: str
