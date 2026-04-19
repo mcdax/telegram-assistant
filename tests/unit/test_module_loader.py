@@ -97,7 +97,7 @@ async def test_markers_collected_into_registry(tmp_path: Path):
     )
     assert registry.resolve("/fix hi") is not None
     assert registry.resolve("/draft") is not None
-    assert registry.resolve("/auto on") is not None
+    assert registry.resolve("/auto_draft on") is not None
     await http.close()
 
 

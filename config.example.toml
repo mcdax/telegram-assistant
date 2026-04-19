@@ -60,7 +60,7 @@ last_n = 20
 
 # Initial whitelist of chat IDs where incoming messages trigger auto-draft.
 # This is a seed only — the runtime truth lives in state.toml and is
-# toggled with /auto on / /auto off in-chat.
+# toggled with /auto_draft on / /auto_draft off in-chat.
 auto_draft_chats = []
 
 # Optional external enrichment service. When set, each draft POSTs the
@@ -73,9 +73,9 @@ enrichment_timeout_s = 10
 # Trigger strings for this module's markers. Keys are the stable internal
 # names; values are whatever you want to type in your Telegram input.
 [modules.drafting.markers]
-draft    = "/draft"
-auto_on  = "/auto on"
-auto_off = "/auto off"
+draft          = "/draft"
+auto_draft_on  = "/auto_draft on"
+auto_draft_off = "/auto_draft off"
 
 # Optional per-chat overrides. Positive IDs (users) use bare keys; negative
 # IDs (supergroups/channels) MUST be quoted.

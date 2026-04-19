@@ -27,8 +27,8 @@ async def test_auto_on_then_incoming_drafts(tmp_path: Path):
     app = App(tg=tg, llm=fake_llm("R"), http=http, state_path=tmp_path / "state.toml")
     await app.start(modules_cfg)
 
-    # First: /auto on flips state, writes confirmation.
-    await app.inject_draft_update(DraftUpdate(chat_id=9, text="/auto on"))
+    # First: /auto_draft on flips state, writes confirmation.
+    await app.inject_draft_update(DraftUpdate(chat_id=9, text="/auto_draft on"))
     await app.drain()
     assert tg.drafts[9].startswith("✓ Auto-draft enabled")
 
@@ -37,8 +37,8 @@ async def test_auto_on_then_incoming_drafts(tmp_path: Path):
     await app.drain()
     assert tg.drafts[9] == "R"
 
-    # Finally: /auto off disables.
-    await app.inject_draft_update(DraftUpdate(chat_id=9, text="/auto off"))
+    # Finally: /auto_draft off disables.
+    await app.inject_draft_update(DraftUpdate(chat_id=9, text="/auto_draft off"))
     await app.drain()
     assert tg.drafts[9].startswith("✓ Auto-draft disabled")
 

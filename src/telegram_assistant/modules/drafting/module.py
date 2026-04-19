@@ -1,4 +1,4 @@
-"""Drafting module. Owns /draft, /auto on, /auto off markers and auto-draft policy."""
+"""Drafting module. Owns /draft, /auto_draft on, /auto_draft off markers and auto-draft policy."""
 from __future__ import annotations
 
 from typing import Any
@@ -12,7 +12,11 @@ from .enricher import Enricher
 from .pipeline import Pipeline
 
 
-DEFAULT_MARKERS = {"draft": "/draft", "auto_on": "/auto on", "auto_off": "/auto off"}
+DEFAULT_MARKERS = {
+    "draft": "/draft",
+    "auto_draft_on": "/auto_draft on",
+    "auto_draft_off": "/auto_draft off",
+}
 
 
 class DraftingModule:
@@ -30,14 +34,14 @@ class DraftingModule:
         user_markers = cfg.get("markers", {})
         self._markers = [
             Marker(
-                name="auto_on",
-                trigger=user_markers.get("auto_on", DEFAULT_MARKERS["auto_on"]),
+                name="auto_draft_on",
+                trigger=user_markers.get("auto_draft_on", DEFAULT_MARKERS["auto_draft_on"]),
                 kind=MatchKind.EXACT,
                 priority=100,
             ),
             Marker(
-                name="auto_off",
-                trigger=user_markers.get("auto_off", DEFAULT_MARKERS["auto_off"]),
+                name="auto_draft_off",
+                trigger=user_markers.get("auto_draft_off", DEFAULT_MARKERS["auto_draft_off"]),
                 kind=MatchKind.EXACT,
                 priority=100,
             ),
@@ -82,9 +86,9 @@ class DraftingModule:
             "on_draft_update chat=%s marker=%s remainder=%r",
             event.chat_id, name, match.remainder[:80],
         )
-        if name == "auto_on":
+        if name == "auto_draft_on":
             await self._set_auto(event.chat_id, True)
-        elif name == "auto_off":
+        elif name == "auto_draft_off":
             await self._set_auto(event.chat_id, False)
         elif name == "draft":
             await self._draft(chat_id=event.chat_id, chat_title="", instruction=match.remainder)

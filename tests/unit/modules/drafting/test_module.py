@@ -27,7 +27,7 @@ def _module_config(**overrides: Any) -> dict[str, Any]:
         "enrichment_url": "",
         "enrichment_auth_header": "",
         "enrichment_timeout_s": 5,
-        "markers": {"draft": "/draft", "auto_on": "/auto on", "auto_off": "/auto off"},
+        "markers": {"draft": "/draft", "auto_draft_on": "/auto_draft on", "auto_draft_off": "/auto_draft off"},
     }
     base.update(overrides)
     return base
@@ -54,8 +54,8 @@ async def test_markers_use_defaults():
     await mod.init(ctx)
     names = {m.name for m in mod.markers()}
     triggers = {m.trigger for m in mod.markers()}
-    assert names == {"draft", "auto_on", "auto_off"}
-    assert triggers == {"/draft", "/auto on", "/auto off"}
+    assert names == {"draft", "auto_draft_on", "auto_draft_off"}
+    assert triggers == {"/draft", "/auto_draft on", "/auto_draft off"}
     await ctx.http.close()
 
 
@@ -63,7 +63,7 @@ async def test_markers_respect_user_overrides(tmp_path: Path):
     mod = DraftingModule()
     ctx, _, _ = await _ctx(
         tmp_path,
-        _module_config(markers={"draft": "!d", "auto_on": "!on", "auto_off": "!off"}),
+        _module_config(markers={"draft": "!d", "auto_draft_on": "!on", "auto_draft_off": "!off"}),
     )
     await mod.init(ctx)
     triggers = {m.trigger for m in mod.markers()}
@@ -134,8 +134,8 @@ async def test_auto_on_sets_state_and_confirms(tmp_path: Path):
     mod = DraftingModule()
     ctx, tg, state = await _ctx(tmp_path, _module_config())
     await mod.init(ctx)
-    match = _find_marker(mod, "auto_on")
-    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto on"), match)
+    match = _find_marker(mod, "auto_draft_on")
+    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft on"), match)
     assert state.for_module("drafting").get("auto_draft", "1", default=None) is True
     assert tg.drafts[1].startswith("✓ Auto-draft enabled")
     await ctx.http.close()
@@ -145,8 +145,8 @@ async def test_auto_off_sets_state_and_confirms(tmp_path: Path):
     mod = DraftingModule()
     ctx, tg, state = await _ctx(tmp_path, _module_config(auto_draft_chats=[1]))
     await mod.init(ctx)
-    match = _find_marker(mod, "auto_off")
-    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto off"), match)
+    match = _find_marker(mod, "auto_draft_off")
+    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft off"), match)
     assert state.for_module("drafting").get("auto_draft", "1", default=None) is False
     assert tg.drafts[1].startswith("✓ Auto-draft disabled")
     await ctx.http.close()
@@ -171,9 +171,9 @@ async def test_set_auto_writes_failure_draft_on_state_write_error(tmp_path: Path
     mod = DraftingModule()
     ctx, tg, _ = await _ctx(tmp_path, _module_config())
     await mod.init(ctx)
-    match = _find_marker(mod, "auto_on")
+    match = _find_marker(mod, "auto_draft_on")
     with patch("os.replace", side_effect=OSError("disk full")):
-        await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto on"), match)
+        await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft on"), match)
     assert tg.drafts[1] == "✗ state write failed"
     await ctx.http.close()
 
