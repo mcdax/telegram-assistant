@@ -15,12 +15,13 @@ from telethon import events as _events
 from telethon.tl.functions.messages import SaveDraftRequest
 from telethon.utils import get_peer_id
 
-from .events import DraftUpdate, IncomingMessage, Message, OutgoingMessage
+from .events import DraftUpdate, IncomingMessage, Message, MessageEdited, OutgoingMessage
 
 log = logging.getLogger(__name__)
 
 OnIncoming = Callable[[IncomingMessage], Awaitable[None]]
 OnOutgoing = Callable[[OutgoingMessage], Awaitable[None]]
+OnEdited = Callable[[MessageEdited], Awaitable[None]]
 OnDraft = Callable[[DraftUpdate], Awaitable[None]]
 
 
@@ -33,11 +34,13 @@ class TelethonTelegramClient:
         session: str,
         on_incoming: OnIncoming,
         on_outgoing: OnOutgoing,
+        on_edited: OnEdited,
         on_draft: OnDraft,
     ) -> None:
         self._client = _Telethon(session, api_id, api_hash)
         self._on_incoming = on_incoming
         self._on_outgoing = on_outgoing
+        self._on_edited = on_edited
         self._on_draft = on_draft
 
     async def connect(self) -> None:
@@ -66,6 +69,15 @@ class TelethonTelegramClient:
                 msg.chat_id, msg.sender, msg.message_id, len(msg.text),
             )
             await self._on_outgoing(OutgoingMessage(msg))
+
+        @self._client.on(_events.MessageEdited(incoming=True))
+        async def _edit(event):
+            msg = await self._to_message(event)
+            log.debug(
+                "telethon MessageEdited incoming chat=%s sender=%s id=%s text_len=%d",
+                msg.chat_id, msg.sender, msg.message_id, len(msg.text),
+            )
+            await self._on_edited(MessageEdited(msg))
 
         @self._client.on(_events.Raw())
         async def _raw(update):

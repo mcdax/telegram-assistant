@@ -63,6 +63,14 @@ last_n = 20
 # toggled with /auto_draft on / /auto_draft off in-chat.
 auto_draft_chats = []
 
+# Debounce window (seconds) for auto-draft. The first incoming message in
+# an idle chat drafts immediately. While the chat is "in cooldown" —
+# within this many seconds of the last generated draft — further incoming
+# messages or edits reset a timer and only produce a new draft after the
+# chat has been silent for this long. Sending a message yourself clears
+# the cooldown. Set to 0 to disable debouncing (draft on every message).
+auto_draft_debounce_s = 60
+
 # Optional external enrichment service. When set, each draft POSTs the
 # last-N messages and uses the response as extra context. Leave empty to
 # draft from chat history alone.

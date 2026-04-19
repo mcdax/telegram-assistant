@@ -1,9 +1,26 @@
-"""Drafting module. Owns /draft, /auto_draft on, /auto_draft off markers and auto-draft policy."""
+"""Drafting module. Owns /draft, /auto_draft on, /auto_draft off markers and auto-draft policy.
+
+Auto-draft debouncing:
+  * First inbound activity in an idle chat drafts immediately.
+  * While "in cooldown" (< ``auto_draft_debounce_s`` seconds since the last
+    generated draft), new inbound activity (incoming messages, edits to
+    incoming messages) schedules a delayed draft. Each new activity
+    re-starts the timer, so we only redraft after a period of silence.
+  * A message the user sends clears the cooldown entirely: the draft is
+    assumed to have been consumed / made moot.
+"""
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
-from telegram_assistant.events import DraftUpdate, IncomingMessage
+from telegram_assistant.events import (
+    DraftUpdate,
+    IncomingMessage,
+    MessageEdited,
+    OutgoingMessage,
+)
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
@@ -17,6 +34,7 @@ DEFAULT_MARKERS = {
     "auto_draft_on": "/auto_draft on",
     "auto_draft_off": "/auto_draft off",
 }
+DEFAULT_DEBOUNCE_S = 60
 
 
 class DraftingModule:
@@ -27,6 +45,9 @@ class DraftingModule:
         self._markers: list[Marker] = []
         self._auto_draft_seed: set[int] = set()
         self._per_chat: dict[str, dict[str, Any]] = {}
+        self._debounce_s: int = DEFAULT_DEBOUNCE_S
+        self._last_drafted_at: dict[int, float] = {}
+        self._pending: dict[int, asyncio.Task[None]] = {}
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
@@ -54,6 +75,7 @@ class DraftingModule:
         ]
         self._auto_draft_seed = {int(c) for c in cfg.get("auto_draft_chats", [])}
         self._per_chat = cfg.get("chats", {})
+        self._debounce_s = int(cfg.get("auto_draft_debounce_s", DEFAULT_DEBOUNCE_S))
         self._enricher = Enricher(
             http=ctx.http,
             url=cfg.get("enrichment_url", ""),
@@ -62,7 +84,9 @@ class DraftingModule:
         )
 
     async def shutdown(self) -> None:
-        return
+        for task in list(self._pending.values()):
+            task.cancel()
+        self._pending.clear()
 
     def markers(self) -> list[Marker]:
         return list(self._markers)
@@ -76,8 +100,27 @@ class DraftingModule:
         if not self._auto_on(msg.chat_id):
             self._ctx.log.debug("skip incoming chat=%s: auto-draft off", msg.chat_id)
             return
-        self._ctx.log.debug("auto-drafting for chat=%s", msg.chat_id)
-        await self._draft(chat_id=msg.chat_id, chat_title=msg.sender, instruction="")
+        await self._trigger_auto_draft(msg.chat_id, chat_title=msg.sender, trigger="incoming")
+
+    async def on_message_edited(self, event: MessageEdited) -> None:
+        assert self._ctx is not None
+        msg = event.message
+        if msg.outgoing:
+            return
+        if not self._auto_on(msg.chat_id):
+            self._ctx.log.debug("skip edit chat=%s: auto-draft off", msg.chat_id)
+            return
+        await self._trigger_auto_draft(msg.chat_id, chat_title=msg.sender, trigger="edit")
+
+    async def on_outgoing_message(self, event: OutgoingMessage) -> None:
+        """Our pending debounce is moot once the user sends: start fresh next time."""
+        assert self._ctx is not None
+        chat_id = event.message.chat_id
+        if self._cancel_pending(chat_id):
+            self._ctx.log.debug("outgoing in chat=%s cancelled pending debounce", chat_id)
+        if chat_id in self._last_drafted_at:
+            self._last_drafted_at.pop(chat_id, None)
+            self._ctx.log.debug("outgoing in chat=%s cleared cooldown", chat_id)
 
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None
@@ -92,6 +135,52 @@ class DraftingModule:
             await self._set_auto(event.chat_id, False)
         elif name == "draft":
             await self._draft(chat_id=event.chat_id, chat_title="", instruction=match.remainder)
+
+    async def _trigger_auto_draft(
+        self, chat_id: int, *, chat_title: str, trigger: str
+    ) -> None:
+        """Decide: draft now (idle), or schedule a debounced draft (cooldown)."""
+        assert self._ctx is not None
+        self._cancel_pending(chat_id)
+
+        last = self._last_drafted_at.get(chat_id)
+        now = time.monotonic()
+        in_cooldown = (
+            self._debounce_s > 0 and last is not None and (now - last) < self._debounce_s
+        )
+        if not in_cooldown:
+            self._ctx.log.debug(
+                "auto-drafting chat=%s trigger=%s (idle or debounce disabled)",
+                chat_id, trigger,
+            )
+            await self._draft(chat_id=chat_id, chat_title=chat_title, instruction="")
+            self._last_drafted_at[chat_id] = time.monotonic()
+        else:
+            self._ctx.log.debug(
+                "auto-drafting chat=%s trigger=%s deferred %ds (cooldown active)",
+                chat_id, trigger, self._debounce_s,
+            )
+            self._pending[chat_id] = asyncio.create_task(
+                self._debounced(chat_id, chat_title)
+            )
+
+    async def _debounced(self, chat_id: int, chat_title: str) -> None:
+        try:
+            await asyncio.sleep(self._debounce_s)
+        except asyncio.CancelledError:
+            return
+        try:
+            await self._draft(chat_id=chat_id, chat_title=chat_title, instruction="")
+        finally:
+            self._last_drafted_at[chat_id] = time.monotonic()
+            self._pending.pop(chat_id, None)
+
+    def _cancel_pending(self, chat_id: int) -> bool:
+        task = self._pending.pop(chat_id, None)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     async def _set_auto(self, chat_id: int, on: bool) -> None:
         assert self._ctx is not None

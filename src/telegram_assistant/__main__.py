@@ -44,6 +44,9 @@ async def _run(args: argparse.Namespace) -> None:
     async def on_outgoing(event):
         await app_holder["app"].inject_outgoing(event)
 
+    async def on_edited(event):
+        await app_holder["app"].inject_edited(event)
+
     async def on_draft(event):
         await app_holder["app"].inject_draft_update(event)
 
@@ -57,6 +60,7 @@ async def _run(args: argparse.Namespace) -> None:
         session=str(session_path),
         on_incoming=on_incoming,
         on_outgoing=on_outgoing,
+        on_edited=on_edited,
         on_draft=on_draft,
     )
     llm = LLMFactory(model=cfg.llm.model, timeout_s=cfg.llm.timeout_s)

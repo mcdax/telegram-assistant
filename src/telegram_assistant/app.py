@@ -18,7 +18,7 @@ from typing import Any
 import aiohttp
 
 from .event_bus import EventBus
-from .events import DraftUpdate, IncomingMessage, OutgoingMessage
+from .events import DraftUpdate, IncomingMessage, MessageEdited, OutgoingMessage
 from .llm import LLMFactory
 from .loop_protection import LoopProtection
 from .markers import MarkerRegistry
@@ -64,6 +64,8 @@ class App:
         for m in self._modules:
             if hasattr(m, "on_incoming_message"):
                 self._bus.subscribe("incoming", m.name, m.on_incoming_message)
+            if hasattr(m, "on_message_edited"):
+                self._bus.subscribe("edited", m.name, m.on_message_edited)
             if hasattr(m, "on_outgoing_message"):
                 self._bus.subscribe("outgoing", m.name, m.on_outgoing_message)
             if hasattr(m, "on_draft_update"):
@@ -122,6 +124,17 @@ class App:
         for m in self._modules:
             await self._bus.dispatch(
                 "outgoing", m.name, chat_id=msg.chat_id, payload=event
+            )
+
+    async def inject_edited(self, event: MessageEdited) -> None:
+        msg = event.message
+        log.debug(
+            "inject_edited chat=%s sender=%s id=%s text=%r",
+            msg.chat_id, msg.sender, msg.message_id, _truncate(msg.text),
+        )
+        for m in self._modules:
+            await self._bus.dispatch(
+                "edited", m.name, chat_id=msg.chat_id, payload=event
             )
 
     async def drain(self) -> None:

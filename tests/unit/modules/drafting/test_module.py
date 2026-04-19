@@ -9,7 +9,7 @@ import aiohttp
 import pytest
 from aioresponses import aioresponses
 
-from telegram_assistant.events import DraftUpdate, IncomingMessage
+from telegram_assistant.events import DraftUpdate, IncomingMessage, MessageEdited, OutgoingMessage
 from telegram_assistant.markers import MarkerMatch
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.drafting.module import DraftingModule
@@ -183,3 +183,152 @@ def _find_marker(mod: DraftingModule, name: str) -> MarkerMatch:
         if m.name == name:
             return MarkerMatch(module="drafting", marker=m, remainder="")
     raise AssertionError(f"no marker {name}")
+
+
+# ---------- debounce + edit behaviour ----------
+
+
+async def test_second_incoming_within_window_is_debounced(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    # First message drafts immediately.
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    assert tg.drafts[1] == "GENERATED"
+
+    # Reset the fake-tg draft state so we can see whether a second draft lands.
+    tg.drafts.clear()
+
+    # Second incoming in the 60s window must NOT draft immediately — it
+    # schedules a debounced task. No new draft written synchronously.
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    assert tg.drafts == {}
+    assert 1 in mod._pending  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_debounced_task_cancels_on_next_trigger(tmp_path: Path):
+    import asyncio
+
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    first_task = mod._pending[1]  # type: ignore[attr-defined]
+
+    # Third trigger cancels the previously pending task and schedules a new one.
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi3")))
+    # Let the cancellation propagate through the event loop.
+    await asyncio.sleep(0)
+    assert first_task.cancelled() or first_task.done()
+    assert 1 in mod._pending  # type: ignore[attr-defined]
+    assert mod._pending[1] is not first_task  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_user_send_cancels_pending_and_clears_cooldown(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    assert 1 in mod._pending  # type: ignore[attr-defined]
+
+    outgoing = make_message(1, "me", "ok thanks", outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(outgoing))
+
+    # Pending is cancelled and state cleared, so the NEXT incoming drafts
+    # immediately again rather than being debounced.
+    assert 1 not in mod._pending  # type: ignore[attr-defined]
+    assert 1 not in mod._last_drafted_at  # type: ignore[attr-defined]
+
+    tg.drafts.clear()
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi3")))
+    assert tg.drafts[1] == "GENERATED"
+    await ctx.http.close()
+
+
+async def test_debounce_disabled_drafts_every_message(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=0),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    assert tg.drafts[1] == "GENERATED"
+    tg.drafts.clear()
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    assert tg.drafts[1] == "GENERATED"
+    assert 1 not in mod._pending  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_edit_of_incoming_triggers_same_debounce(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    # Edit with no prior cooldown → drafts immediately.
+    await mod.on_message_edited(MessageEdited(make_message(1, "alice", "hi edited")))
+    assert tg.drafts[1] == "GENERATED"
+
+    # Edit within cooldown → deferred.
+    tg.drafts.clear()
+    await mod.on_message_edited(MessageEdited(make_message(1, "alice", "hi edited again")))
+    assert tg.drafts == {}
+    assert 1 in mod._pending  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_edit_respects_auto_draft_off(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[], auto_draft_debounce_s=60),
+    )
+    await mod.init(ctx)
+    await mod.on_message_edited(MessageEdited(make_message(1, "alice", "hi edited")))
+    assert tg.drafts == {}
+    assert 1 not in mod._pending  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_shutdown_cancels_pending_tasks(tmp_path: Path):
+    import asyncio
+
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    task = mod._pending[1]  # type: ignore[attr-defined]
+
+    await mod.shutdown()
+    # The shutdown fires cancel() on the task; let the loop deliver it.
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert task.cancelled() or task.done()
+    await ctx.http.close()

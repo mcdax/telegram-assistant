@@ -21,6 +21,18 @@ class IncomingMessage:
 
 
 @dataclass(frozen=True)
+class MessageEdited:
+    """Fired when an incoming message (not our own) is edited.
+
+    Distinct from IncomingMessage so that modules opt in to edit handling
+    explicitly (e.g. drafting re-triggers auto-draft; media_reply does not
+    re-download on edits).
+    """
+
+    message: Message
+
+
+@dataclass(frozen=True)
 class OutgoingMessage:
     """Emitted when the user sends a message through their own account.
 
