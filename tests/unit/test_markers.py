@@ -1,4 +1,6 @@
-from telegram_assistant.markers import Marker, MatchKind
+import pytest
+
+from telegram_assistant.markers import Marker, MatchKind, MarkerRegistry, DuplicateTriggerError
 
 
 def test_exact_match_case_insensitive_trimmed():
@@ -44,9 +46,6 @@ def test_contains_takes_first_occurrence():
     assert remainder == "a b /draft c"
 
 
-from telegram_assistant.markers import MarkerRegistry, DuplicateTriggerError
-
-
 def test_registry_returns_winning_marker():
     reg = MarkerRegistry()
     reg.register("drafting", [
@@ -79,14 +78,12 @@ def test_registry_no_match_returns_none():
 def test_registry_duplicate_trigger_rejected_across_modules():
     reg = MarkerRegistry()
     reg.register("drafting", [Marker("draft", "/x", MatchKind.CONTAINS, priority=50)])
-    import pytest
     with pytest.raises(DuplicateTriggerError):
         reg.register("correcting", [Marker("fix", "/x", MatchKind.CONTAINS, priority=70)])
 
 
 def test_registry_duplicate_trigger_rejected_same_module():
     reg = MarkerRegistry()
-    import pytest
     with pytest.raises(DuplicateTriggerError):
         reg.register("drafting", [
             Marker("a", "/x", MatchKind.CONTAINS, priority=50),

@@ -6,7 +6,6 @@ broken by registration order) and the matching module handles the event.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
@@ -73,7 +72,7 @@ class MarkerRegistry:
         for m in markers:
             self._entries.append((module_name, m))
 
-    def resolve(self, text: str) -> Union[MarkerMatch, None]:
+    def resolve(self, text: str) -> MarkerMatch | None:
         candidates: list[MarkerMatch] = []
         for module_name, marker in self._entries:
             ok, remainder = marker.match(text)
