@@ -12,6 +12,10 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
 
 # Git / editor / docs / tests not needed in the image
 .git/
