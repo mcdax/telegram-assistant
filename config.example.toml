@@ -1,0 +1,40 @@
+[telegram]
+api_id = 0
+api_hash = "YOUR_API_HASH"
+session = "assistant"
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+timeout_s = 30
+
+[modules.drafting]
+enabled = true
+default_system_prompt = "You are drafting a reply in the user's voice. Casual, concise, matches the conversation's tone."
+last_n = 20
+auto_draft_chats = []
+enrichment_url = ""
+enrichment_auth_header = ""
+enrichment_timeout_s = 10
+
+[modules.drafting.markers]
+draft = "/draft"
+auto_on = "/auto on"
+auto_off = "/auto off"
+
+[modules.correcting]
+enabled = true
+system_prompt = "Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."
+
+[modules.correcting.markers]
+fix = "/fix"
+
+[modules.media_reply]
+enabled = true
+chats = []
+send_as = "reply"
+download_timeout_s = 60
+
+[[modules.media_reply.handlers]]
+name = "instagram"
+pattern = 'https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/[\w-]+'
+backend = "yt_dlp"

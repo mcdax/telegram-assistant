@@ -1,0 +1,16 @@
+# Secrets and runtime state
+config.toml
+state.toml
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
