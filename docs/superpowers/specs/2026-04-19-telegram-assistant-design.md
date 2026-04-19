@@ -13,6 +13,7 @@ A Telegram **userbot** (runs under the user's own account via MTProto, not the B
 - **Correcting the user's own text** (grammar, spelling, punctuation) without involving chat history.
 - Works across **1:1 DMs, groups, and channels**.
 - **Auto-drafting** runs only in whitelisted chats. Manual `/draft` works anywhere.
+- The whitelist can be toggled per chat at runtime with `/auto on` and `/auto off` markers.
 - `/fix` is always manual; no "auto-fix" mode.
 
 Out of scope: sending on the user's behalf, message moderation, multi-user deployments, Bot API integration.
@@ -44,18 +45,40 @@ If the remainder after stripping `/fix` is empty or whitespace, we ignore the tr
 
 ### 3.3 Auto-draft in whitelisted chats
 
-- On `UpdateNewMessage` for an incoming message in a chat listed under `[drafting].auto_draft_chats`, the drafting pipeline runs automatically (no marker required).
+- On `UpdateNewMessage` for an incoming message in a chat where auto-draft is currently **on** (see §3.5 for resolution), the drafting pipeline runs automatically (no marker required).
 - The generated reply is written as the chat's draft.
 - The user's own outgoing messages never trigger auto-draft.
 
-### 3.4 Loop protection
+### 3.4 `/auto on` and `/auto off` markers
+
+- Draft text exactly matching (case-insensitive, whitespace-trimmed) `/auto on` or `/auto off` updates the runtime auto-draft state for the current chat.
+- `/auto on` → sets `state.toml.auto_draft."<chat_id>" = true`.
+- `/auto off` → sets `state.toml.auto_draft."<chat_id>" = false`.
+- The draft is overwritten with a one-line confirmation (`✓ Auto-draft enabled for this chat` / `✓ Auto-draft disabled for this chat`).
+- No chat history is fetched, no enrichment is called, no LLM is invoked.
+- Anything other than exactly `on` or `off` after `/auto` is ignored (logged).
+- These markers never trigger alongside `/draft` or `/fix` in the same draft; if multiple markers appear, `trigger_parser` resolves per §3.6.
+
+### 3.5 Effective auto-draft state
+
+Resolution for a given chat ID, in order:
+
+1. If `state.toml.auto_draft."<chat_id>"` is set → use that boolean.
+2. Else if `<chat_id>` is in `config.toml.drafting.auto_draft_chats` → `true`.
+3. Else → `false`.
+
+`config.toml.drafting.auto_draft_chats` is the initial seed; `state.toml` holds runtime overrides and always wins. `config.toml` is never written by the app.
+
+### 3.6 Loop protection and marker precedence (formerly §3.4)
 
 We keep `last_processed_draft[chat_id]` in memory. A draft-update is processed only when both hold:
 
 1. The current draft text differs from the last one we wrote for that chat.
-2. The current draft text contains an unprocessed marker.
+2. The current draft text contains an unprocessed marker (`/draft`, `/fix`, `/auto on`, or `/auto off`).
 
-After writing our generated output, we set `last_processed_draft[chat_id]` to what we wrote so the resulting `UpdateDraftMessage` (echoing our own write) does not retrigger.
+After writing our generated output (or confirmation, for `/auto`), we set `last_processed_draft[chat_id]` to what we wrote so the resulting `UpdateDraftMessage` (echoing our own write) does not retrigger.
+
+**Marker precedence when multiple are present in a single draft:** `/auto` > `/fix` > `/draft`. The winning marker is processed; others are ignored for this trigger.
 
 ## 4. Architecture
 
@@ -66,13 +89,14 @@ Single-process Python 3.12 asyncio application. Components communicate by direct
 ### 4.2 Components
 
 - **`telegram_client`** — Telethon client; subscribes to `UpdateDraftMessage` and `UpdateNewMessage`; exposes `write_draft(chat_id, text)` and `fetch_history(chat_id, n)`.
-- **`trigger_parser`** — given a draft text, identifies which marker (if any) applies, strips it, returns `(kind, remainder)` where `kind ∈ {draft, fix, none}`.
-- **`chat_policy`** — given a chat event, decides the action: `skip | auto_draft | manual_draft | manual_fix`. Consumes config + loop-protection state.
+- **`trigger_parser`** — given a draft text, identifies which marker (if any) applies per §3.6, strips it, returns `(kind, remainder)` where `kind ∈ {draft, fix, auto_on, auto_off, none}`.
+- **`chat_policy`** — given a chat event, decides the action: `skip | auto_draft | manual_draft | manual_fix | auto_on | auto_off`. Consumes config, runtime state, and loop-protection state.
 - **`context_fetcher`** — calls `telegram_client.fetch_history(chat_id, last_n)`, returns a list of `(sender, timestamp, text)` tuples.
 - **`enricher`** — POSTs `{chat_id, messages[]}` to the configured endpoint; returns a context blob (string) or empty on failure/timeout.
 - **`drafter`** — Pydantic AI agent. Inputs: resolved system prompt, enrichment blob, chat history, optional user instruction. Output: draft reply string.
 - **`corrector`** — Pydantic AI agent. Inputs: correction system prompt, text to rewrite. Output: corrected string.
 - **`config_loader`** — loads `config.toml`; watches the file for changes and hot-reloads (via `watchfiles`).
+- **`runtime_state`** — reads/writes `state.toml` (currently: per-chat auto-draft overrides). Atomic write on mutation. In-memory read path; no file watch (only we write it).
 - **`app`** — wires components and runs the asyncio loop.
 
 ### 4.3 Data flow — `/draft`
@@ -102,9 +126,19 @@ UpdateDraftMessage ──► trigger_parser ──► chat_policy (manual_fix)
 ### 4.5 Data flow — auto-draft
 
 ```
-UpdateNewMessage ──► chat_policy (auto_draft, whitelist)
+UpdateNewMessage ──► chat_policy (auto_draft, effective state §3.5)
                                 │
                       context_fetcher → enricher → drafter → write_draft
+```
+
+### 4.6 Data flow — `/auto on` / `/auto off`
+
+```
+UpdateDraftMessage ──► trigger_parser ──► chat_policy (auto_on | auto_off)
+                                                │
+                                      runtime_state.set(chat_id, on|off)
+                                                │
+                                      telegram_client.write_draft (confirmation)
 ```
 
 ## 5. Configuration
@@ -129,11 +163,12 @@ timeout_s = 10
 [markers]
 draft = "/draft"
 fix = "/fix"
+auto = "/auto"   # base token; full triggers are "<auto> on" and "<auto> off"
 
 [drafting]
 default_system_prompt = """You are drafting a reply in the user's voice. Casual, concise, matches the conversation's tone."""
 last_n = 20
-auto_draft_chats = []   # list of chat IDs (ints)
+auto_draft_chats = []   # list of chat IDs (ints) — initial seed only; runtime overrides live in state.toml
 
 [correcting]
 system_prompt = """Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."""
@@ -152,7 +187,7 @@ system_prompt = "..."
 
 - System prompt for a chat: `chats.<id>.system_prompt` if set, else `drafting.default_system_prompt`.
 - `last_n` for a chat: `chats.<id>.last_n` if set, else `drafting.last_n`.
-- Auto-draft: chat ID is in `drafting.auto_draft_chats`.
+- Auto-draft effective state: see §3.5 (runtime override in `state.toml` wins over `config.toml.drafting.auto_draft_chats`).
 
 ### 5.2 Hot reload
 
@@ -239,12 +274,14 @@ Each LLM call is wrapped in `asyncio.wait_for(..., llm.timeout_s)`. On timeout: 
 | Malformed draft (binary, very long text) | Length-capped at 16KB input; silently skipped beyond.                 |
 | Config reload with invalid TOML          | Keep previous in-memory config; log error.                            |
 | Writing a draft fails                    | Log; do not retry (the user will see the trigger still in the input). |
+| Writing `state.toml` fails               | Keep the in-memory change, log error, write a failure confirmation (`✗ state write failed`) to the draft. |
 
 ## 9. Testing
 
 - **Unit tests** (no network, no LLM):
-  - `trigger_parser`: draft/fix markers in various positions, empty remainder, no marker, multiple markers (first wins).
-  - `chat_policy`: whitelist logic, loop protection, auto vs. manual classification.
+  - `trigger_parser`: draft/fix/auto markers in various positions, empty remainder, no marker, multiple markers (precedence per §3.6), `/auto` with garbage suffix ignored.
+  - `chat_policy`: whitelist logic, runtime override resolution (§3.5), loop protection, auto vs. manual classification.
+  - `runtime_state`: read/write cycle, atomic write semantics, behaviour when `state.toml` is absent on startup.
   - `enricher`: mock HTTP with `aioresponses`; timeout, non-2xx, network error, happy path.
   - `drafter` / `corrector`: use Pydantic AI's `TestModel` — no real API calls.
   - `config_loader`: valid TOML, invalid TOML, per-chat overrides, reload semantics.
@@ -265,7 +302,7 @@ Each LLM call is wrapped in `asyncio.wait_for(..., llm.timeout_s)`. On timeout: 
 - `typer` — (optional) small CLI for first-run login and config validation
 - `pytest` + `pytest-asyncio` + `aioresponses` — test stack
 
-No SQLite, no database, no persistent state other than `config.toml` and Telethon's own session file.
+No SQLite, no database. Persistent files: `config.toml` (user-authored), `state.toml` (app-managed runtime overrides), and Telethon's session file.
 
 ## 11. Non-goals and tradeoffs
 
@@ -273,7 +310,8 @@ No SQLite, no database, no persistent state other than `config.toml` and Teletho
 - **Outgoing self-messages are never replied to automatically.** Only inbound messages trigger auto-draft.
 - **No multi-turn agent loop.** Each draft is a single LLM call. If the user wants refinement, they delete our draft, retype with an instruction, and retrigger.
 - **No queue, no worker pool.** One inflight generation per chat at a time; re-triggering while one is running cancels the previous.
-- **No chat history storage.** We fetch last-N live from Telegram each time. If Telegram is slow, drafting is slow. The in-memory `last_processed_draft` cache (loop protection) is the only runtime state and is discarded on restart.
+- **No chat history storage.** We fetch last-N live from Telegram each time. If Telegram is slow, drafting is slow.
+- **Runtime state is minimal.** The in-memory `last_processed_draft` cache (loop protection) is discarded on restart. `state.toml` persists only per-chat auto-draft overrides.
 
 ## 12. Open items for implementation plan
 
