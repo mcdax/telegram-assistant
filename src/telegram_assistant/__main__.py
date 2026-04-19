@@ -36,10 +36,14 @@ async def _run(args: argparse.Namespace) -> None:
     async def on_draft(event):
         await app_holder["app"].inject_draft_update(event)
 
+    session_path = Path(cfg.telegram.session)
+    if not session_path.is_absolute():
+        session_path = args.state.parent / session_path
+
     tg = TelethonTelegramClient(
         api_id=cfg.telegram.api_id,
         api_hash=cfg.telegram.api_hash,
-        session=cfg.telegram.session,
+        session=str(session_path),
         on_incoming=on_incoming,
         on_draft=on_draft,
     )
