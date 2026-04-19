@@ -1,8 +1,10 @@
 # Secrets and runtime state
 config.toml
 state.toml
+.env
 *.session
 *.session-journal
+data/
 
 # Python
 __pycache__/
