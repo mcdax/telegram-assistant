@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any
 
 MODEL_ENV_VAR = "LLM_MODEL"
+TELEGRAM_API_ID_ENV_VAR = "TELEGRAM_API_ID"
+TELEGRAM_API_HASH_ENV_VAR = "TELEGRAM_API_HASH"
+TELEGRAM_SESSION_ENV_VAR = "TELEGRAM_SESSION"
 
 
 class ConfigError(ValueError):
@@ -55,9 +58,28 @@ def _parse(data: dict[str, Any]) -> Config:
         raise ConfigError("missing [llm] section")
 
     t = data["telegram"]
-    for key in ("api_id", "api_hash", "session"):
-        if key not in t:
-            raise ConfigError(f"missing telegram.{key}")
+
+    api_id_raw = os.environ.get(TELEGRAM_API_ID_ENV_VAR) or t.get("api_id")
+    if api_id_raw in (None, "", 0):
+        raise ConfigError(
+            f"missing telegram.api_id (set in config or via {TELEGRAM_API_ID_ENV_VAR} env var)"
+        )
+    try:
+        api_id = int(api_id_raw)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"telegram.api_id must be an integer, got {api_id_raw!r}") from e
+
+    api_hash = os.environ.get(TELEGRAM_API_HASH_ENV_VAR) or t.get("api_hash")
+    if not api_hash or api_hash == "YOUR_API_HASH":
+        raise ConfigError(
+            f"missing telegram.api_hash (set in config or via {TELEGRAM_API_HASH_ENV_VAR} env var)"
+        )
+
+    session = os.environ.get(TELEGRAM_SESSION_ENV_VAR) or t.get("session")
+    if not session:
+        raise ConfigError(
+            f"missing telegram.session (set in config or via {TELEGRAM_SESSION_ENV_VAR} env var)"
+        )
 
     l = data["llm"]
     if "timeout_s" not in l:
@@ -75,9 +97,9 @@ def _parse(data: dict[str, Any]) -> Config:
 
     return Config(
         telegram=TelegramConfig(
-            api_id=int(t["api_id"]),
-            api_hash=str(t["api_hash"]),
-            session=str(t["session"]),
+            api_id=api_id,
+            api_hash=str(api_hash),
+            session=str(session),
         ),
         llm=LLMConfig(
             model=str(model),
