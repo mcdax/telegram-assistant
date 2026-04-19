@@ -5,6 +5,12 @@ import pytest
 from telegram_assistant.config import Config, ConfigError, load_config
 
 
+@pytest.fixture(autouse=True)
+def _isolate_llm_model_env(monkeypatch):
+    """Keep a host-level LLM_MODEL export from affecting these tests."""
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+
 def test_parses_minimal_config(write_toml):
     path = write_toml(
         """
@@ -107,3 +113,70 @@ def test_invalid_toml_raises(write_toml):
 def test_file_not_found_raises(tmp_path):
     with pytest.raises(ConfigError):
         load_config(tmp_path / "missing.toml")
+
+
+def test_llm_model_from_env(write_toml, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "env:picked")
+    path = write_toml(
+        """
+        [telegram]
+        api_id = 1
+        api_hash = "h"
+        session = "s"
+
+        [llm]
+        timeout_s = 10
+        """
+    )
+    cfg = load_config(path)
+    assert cfg.llm.model == "env:picked"
+
+
+def test_llm_model_env_overrides_config(write_toml, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "env:picked")
+    path = write_toml(
+        """
+        [telegram]
+        api_id = 1
+        api_hash = "h"
+        session = "s"
+
+        [llm]
+        model = "config:value"
+        timeout_s = 10
+        """
+    )
+    cfg = load_config(path)
+    assert cfg.llm.model == "env:picked"
+
+
+def test_llm_model_missing_everywhere_raises(write_toml):
+    path = write_toml(
+        """
+        [telegram]
+        api_id = 1
+        api_hash = "h"
+        session = "s"
+
+        [llm]
+        timeout_s = 10
+        """
+    )
+    with pytest.raises(ConfigError, match="LLM_MODEL"):
+        load_config(path)
+
+
+def test_llm_timeout_still_required(write_toml, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "env:picked")
+    path = write_toml(
+        """
+        [telegram]
+        api_id = 1
+        api_hash = "h"
+        session = "s"
+
+        [llm]
+        """
+    )
+    with pytest.raises(ConfigError, match="timeout_s"):
+        load_config(path)

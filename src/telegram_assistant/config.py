@@ -1,10 +1,13 @@
 """Config loader. Reads and validates config.toml into typed dataclasses."""
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+MODEL_ENV_VAR = "LLM_MODEL"
 
 
 class ConfigError(ValueError):
@@ -57,9 +60,14 @@ def _parse(data: dict[str, Any]) -> Config:
             raise ConfigError(f"missing telegram.{key}")
 
     l = data["llm"]
-    for key in ("model", "timeout_s"):
-        if key not in l:
-            raise ConfigError(f"missing llm.{key}")
+    if "timeout_s" not in l:
+        raise ConfigError("missing llm.timeout_s")
+
+    model = os.environ.get(MODEL_ENV_VAR) or l.get("model")
+    if not model:
+        raise ConfigError(
+            f"missing llm.model (set in config or via {MODEL_ENV_VAR} env var)"
+        )
 
     modules = data.get("modules", {})
     if not isinstance(modules, dict):
@@ -72,7 +80,7 @@ def _parse(data: dict[str, Any]) -> Config:
             session=str(t["session"]),
         ),
         llm=LLMConfig(
-            model=str(l["model"]),
+            model=str(model),
             timeout_s=int(l["timeout_s"]),
         ),
         modules=dict(modules),

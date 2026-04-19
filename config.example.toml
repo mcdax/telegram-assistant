@@ -24,6 +24,10 @@ session = "assistant"
 # "openai:gpt-4o", "google-gla:gemini-1.5-pro", "ollama:llama3.1", etc.
 # The matching API key is read from the provider's environment variable
 # (for example ANTHROPIC_API_KEY) — put it in .env, not here.
+#
+# May also be set via the LLM_MODEL environment variable; the env var
+# overrides this value when both are present. You can omit this line
+# entirely if you prefer to configure the model purely via env.
 model = "anthropic:claude-sonnet-4-6"
 
 # Per-call timeout. Generated drafts that exceed this are silently skipped
