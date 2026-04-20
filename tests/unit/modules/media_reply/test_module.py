@@ -7,7 +7,8 @@ from typing import Any
 import aiohttp
 import pytest
 
-from telegram_assistant.events import IncomingMessage
+from telegram_assistant.events import DraftUpdate, IncomingMessage
+from telegram_assistant.markers import MarkerMatch
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.media_reply.backends import DownloadBackend, DownloadError
 from telegram_assistant.modules.media_reply.module import MediaReplyModule
@@ -137,4 +138,87 @@ async def test_first_handler_wins(tmp_path: Path):
         )
     )
     assert backend.calls == ["https://instagram.com/p/1"]
+    await ctx.http.close()
+
+
+# ---------- /auto_media on|off markers ----------
+
+
+def _find_marker(mod: MediaReplyModule, name: str) -> MarkerMatch:
+    for m in mod.markers():
+        if m.name == name:
+            return MarkerMatch(module="media_reply", marker=m, remainder="")
+    raise AssertionError(f"no marker {name}")
+
+
+async def test_default_markers_registered(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    ctx = await _ctx(tmp_path, _instagram_cfg([]), backend)
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    triggers = {m.trigger for m in mod.markers()}
+    assert triggers == {"/auto_media on", "/auto_media off"}
+    await ctx.http.close()
+
+
+async def test_custom_markers(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    cfg = _instagram_cfg([])
+    cfg["markers"] = {"auto_media_on": "!m on", "auto_media_off": "!m off"}
+    ctx = await _ctx(tmp_path, cfg, backend)
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    triggers = {m.trigger for m in mod.markers()}
+    assert triggers == {"!m on", "!m off"}
+    await ctx.http.close()
+
+
+async def test_auto_media_on_sets_state_and_confirms(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    ctx = await _ctx(tmp_path, _instagram_cfg([]), backend)
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    match = _find_marker(mod, "auto_media_on")
+    await mod.on_draft_update(DraftUpdate(chat_id=3, text="/auto_media on"), match)
+    # State flipped via the module's namespace.
+    assert ctx.state.get("auto_media", "3", default=None) is True  # type: ignore[attr-defined]
+    assert ctx.tg.drafts[3].startswith("✓ Media-reply enabled")  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_auto_media_off_sets_state_and_confirms(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    ctx = await _ctx(tmp_path, _instagram_cfg([3]), backend)
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    match = _find_marker(mod, "auto_media_off")
+    await mod.on_draft_update(DraftUpdate(chat_id=3, text="/auto_media off"), match)
+    assert ctx.state.get("auto_media", "3", default=None) is False  # type: ignore[attr-defined]
+    assert ctx.tg.drafts[3].startswith("✓ Media-reply disabled")  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_runtime_state_override_on_with_no_seed(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    ctx = await _ctx(tmp_path, _instagram_cfg([]), backend)
+    ctx.state.set("auto_media", "7", True)  # type: ignore[attr-defined]
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    await mod.on_incoming_message(
+        IncomingMessage(make_message(7, "alice", "https://instagram.com/reel/x", message_id=1))
+    )
+    assert backend.calls == ["https://instagram.com/reel/x"]
+    await ctx.http.close()
+
+
+async def test_runtime_state_override_off_wins_over_seed(tmp_path: Path):
+    backend = FakeBackend(path=Path("clip.mp4"))
+    ctx = await _ctx(tmp_path, _instagram_cfg([7]), backend)
+    ctx.state.set("auto_media", "7", False)  # type: ignore[attr-defined]
+    mod = MediaReplyModule()
+    await mod.init(ctx)
+    await mod.on_incoming_message(
+        IncomingMessage(make_message(7, "alice", "https://instagram.com/reel/x", message_id=1))
+    )
+    assert backend.calls == []
     await ctx.http.close()

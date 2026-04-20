@@ -126,17 +126,26 @@ auto_fix_sent_off = "/auto_fix_sent off"
 # When an incoming message contains a URL matching a handler's regex, the
 # module downloads the media with the configured backend and replies with
 # the file. Requires ffmpeg for most sites (already bundled in the image).
+#
+#   /auto_media on | off   — per-chat toggle. Persists in state.toml
+#                            under [media_reply.auto_media].
 [modules.media_reply]
 enabled = true
 
-# Safety default — an empty whitelist means the module does nothing. Add
-# the chat IDs where you want URL-aware replies.
+# Initial whitelist of chat IDs. This is a seed only — the runtime truth
+# lives in state.toml and is toggled with /auto_media on / /auto_media off
+# in-chat. Empty list means no chats have media-reply unless enabled via
+# the marker.
 chats = []
 
 # "reply" = send the media as a reply to the original message. "draft" is
 # reserved for a future release.
 send_as = "reply"
 download_timeout_s = 60
+
+[modules.media_reply.markers]
+auto_media_on  = "/auto_media on"
+auto_media_off = "/auto_media off"
 
 # One handler block per URL family. Add more by repeating the section.
 [[modules.media_reply.handlers]]
