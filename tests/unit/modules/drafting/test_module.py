@@ -310,6 +310,85 @@ async def test_edit_respects_auto_draft_off(tmp_path: Path):
     await ctx.http.close()
 
 
+async def test_auto_draft_skipped_when_user_is_drafting(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    # User is mid-composing a reply.
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="I'm writing..."))
+
+    # Incoming arrives; normally would auto-draft immediately (idle).
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    assert tg.drafts == {}
+    await ctx.http.close()
+
+
+async def test_auto_draft_resumes_after_user_clears_draft(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="I'm writing..."))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    assert tg.drafts == {}
+
+    # User clears their input.
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text=""))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi again")))
+    assert tg.drafts[1] == "GENERATED"
+    await ctx.http.close()
+
+
+async def test_user_drafting_cancels_pending_debounced_task(tmp_path: Path):
+    import asyncio
+
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    # First incoming drafts immediately; second schedules debounce.
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    pending = mod._pending[1]  # type: ignore[attr-defined]
+    assert not pending.done()
+
+    # User starts typing — pending task must be cancelled.
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="no thanks"))
+    await asyncio.sleep(0)
+    assert pending.cancelled() or pending.done()
+    assert 1 not in mod._pending  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
+async def test_outgoing_clears_user_drafting(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60),
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="a reply"))
+    outgoing = make_message(1, "me", "a reply", outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(outgoing))
+
+    # Next incoming should proceed to auto-draft (user has sent, no
+    # longer drafting).
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "thanks")))
+    assert tg.drafts[1] == "GENERATED"
+    await ctx.http.close()
+
+
 async def test_shutdown_cancels_pending_tasks(tmp_path: Path):
     import asyncio
 

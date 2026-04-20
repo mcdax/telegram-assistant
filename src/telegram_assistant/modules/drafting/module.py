@@ -48,6 +48,10 @@ class DraftingModule:
         self._debounce_s: int = DEFAULT_DEBOUNCE_S
         self._last_drafted_at: dict[int, float] = {}
         self._pending: dict[int, asyncio.Task[None]] = {}
+        # True while the user's official client has a non-empty draft synced
+        # for this chat; used to suppress auto-draft writes that would
+        # overwrite the user's in-progress typing.
+        self._user_drafting: dict[int, bool] = {}
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
@@ -121,6 +125,30 @@ class DraftingModule:
         if chat_id in self._last_drafted_at:
             self._last_drafted_at.pop(chat_id, None)
             self._ctx.log.debug("outgoing in chat=%s cleared cooldown", chat_id)
+        # User sent → any prior in-progress draft is consumed.
+        self._user_drafting.pop(chat_id, None)
+
+    async def on_plain_draft_update(self, event: DraftUpdate) -> None:
+        """Track whether the user has a non-empty draft in this chat.
+
+        Also cancel any pending auto-draft task: the user has started
+        writing their own reply, so overwriting their input field would
+        destroy their work.
+        """
+        assert self._ctx is not None
+        chat_id = event.chat_id
+        if event.text.strip():
+            was = self._user_drafting.get(chat_id, False)
+            self._user_drafting[chat_id] = True
+            if not was and self._cancel_pending(chat_id):
+                self._ctx.log.debug(
+                    "user started drafting in chat=%s — cancelled pending auto-draft",
+                    chat_id,
+                )
+        else:
+            # Empty draft — user cleared their input.
+            if self._user_drafting.pop(chat_id, False):
+                self._ctx.log.debug("user cleared draft in chat=%s", chat_id)
 
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None
@@ -141,6 +169,12 @@ class DraftingModule:
     ) -> None:
         """Decide: draft now (idle), or schedule a debounced draft (cooldown)."""
         assert self._ctx is not None
+        if self._user_drafting.get(chat_id, False):
+            self._ctx.log.debug(
+                "auto-draft chat=%s trigger=%s skipped: user is drafting",
+                chat_id, trigger,
+            )
+            return
         self._cancel_pending(chat_id)
 
         last = self._last_drafted_at.get(chat_id)
@@ -168,6 +202,14 @@ class DraftingModule:
         try:
             await asyncio.sleep(self._debounce_s)
         except asyncio.CancelledError:
+            return
+        # Final guard: user started typing during our wait — abort.
+        if self._user_drafting.get(chat_id, False):
+            assert self._ctx is not None
+            self._ctx.log.debug(
+                "debounced auto-draft chat=%s aborted: user is drafting", chat_id,
+            )
+            self._pending.pop(chat_id, None)
             return
         try:
             await self._draft(chat_id=chat_id, chat_title=chat_title, instruction="")
