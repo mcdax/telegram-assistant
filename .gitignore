@@ -6,6 +6,9 @@ state.toml
 *.session-journal
 data/
 
+# Claude Code harness settings (local permissions allowlist)
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]

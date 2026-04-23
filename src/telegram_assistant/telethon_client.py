@@ -15,7 +15,7 @@ from telethon import events as _events
 from telethon.tl.functions.messages import SaveDraftRequest
 from telethon.utils import get_peer_id
 
-from .events import DraftUpdate, IncomingMessage, Message, MessageEdited, OutgoingMessage
+from .events import Attachment, DraftUpdate, IncomingMessage, Message, MessageEdited, OutgoingMessage
 
 log = logging.getLogger(__name__)
 
@@ -130,14 +130,18 @@ class TelethonTelegramClient:
     async def fetch_history(self, chat_id: int, n: int) -> list[Message]:
         out: list[Message] = []
         async for m in self._client.iter_messages(chat_id, limit=n):
+            message_type, attachment = _describe_media(m)
             out.append(
                 Message(
                     chat_id=chat_id,
                     message_id=m.id,
                     sender=str(getattr(m.sender, "username", None) or m.sender_id or "unknown"),
+                    sender_id=int(m.sender_id) if m.sender_id is not None else None,
                     timestamp=m.date.astimezone(timezone.utc),
                     text=m.message or "",
                     outgoing=bool(m.out),
+                    message_type=message_type,
+                    attachment=attachment,
                 )
             )
         out.reverse()
@@ -151,15 +155,87 @@ class TelethonTelegramClient:
 
     async def _to_message(self, event) -> Message:
         sender = await event.get_sender()
+        message_type, attachment = _describe_media(event.message)
         return Message(
             chat_id=event.chat_id,
             message_id=event.message.id,
             sender=str(getattr(sender, "username", None) or event.sender_id or "unknown"),
+            sender_id=int(event.sender_id) if event.sender_id is not None else None,
             timestamp=event.message.date.astimezone(timezone.utc),
             text=event.message.message or "",
             outgoing=bool(event.message.out),
+            message_type=message_type,
+            attachment=attachment,
         )
 
     @staticmethod
     def _peer_to_chat_id(peer) -> int:
         return get_peer_id(peer)
+
+
+def _describe_media(message) -> tuple[str, Attachment | None]:
+    """Classify a Telethon Message's media as (message_type, Attachment | None).
+
+    Keeps the mapping narrow: we only care about distinguishing the broad
+    categories an LLM can reason about (photo vs voice vs sticker vs file
+    vs embedded weblink). Unknown media become "media" with a generic
+    description so the model at least knows something was attached.
+    """
+    media = getattr(message, "media", None)
+    if media is None:
+        return "text", None
+
+    media_type = type(media).__name__
+
+    if media_type == "MessageMediaPhoto":
+        return "photo", Attachment(type="photo", description="photo", url=None)
+
+    if media_type == "MessageMediaDocument":
+        doc = getattr(media, "document", None)
+        attrs = list(getattr(doc, "attributes", []) or []) if doc else []
+        attr_names = {type(a).__name__ for a in attrs}
+
+        if "DocumentAttributeAudio" in attr_names:
+            audio = next(a for a in attrs if type(a).__name__ == "DocumentAttributeAudio")
+            duration = int(getattr(audio, "duration", 0) or 0)
+            if getattr(audio, "voice", False):
+                return "voice", Attachment("voice", f"voice {duration}s", None)
+            return "audio", Attachment("audio", f"audio {duration}s", None)
+
+        if "DocumentAttributeVideo" in attr_names:
+            vid = next(a for a in attrs if type(a).__name__ == "DocumentAttributeVideo")
+            duration = int(getattr(vid, "duration", 0) or 0)
+            w = int(getattr(vid, "w", 0) or 0)
+            h = int(getattr(vid, "h", 0) or 0)
+            return "video", Attachment("video", f"video {duration}s {w}x{h}", None)
+
+        if "DocumentAttributeSticker" in attr_names:
+            stk = next(a for a in attrs if type(a).__name__ == "DocumentAttributeSticker")
+            alt = getattr(stk, "alt", "") or ""
+            return "sticker", Attachment("sticker", f"sticker {alt}".strip(), None)
+
+        filename = next(
+            (getattr(a, "file_name", None) for a in attrs if hasattr(a, "file_name")),
+            None,
+        ) or "file"
+        return "document", Attachment("document", f"document: {filename}", None)
+
+    if media_type == "MessageMediaWebPage":
+        page = getattr(media, "webpage", None)
+        url = getattr(page, "url", None) if page else None
+        title = getattr(page, "title", None) if page else None
+        desc = f"link: {title}" if title else "link"
+        return "weblink", Attachment("weblink", desc, url)
+
+    if media_type == "MessageMediaContact":
+        return "contact", Attachment("contact", "contact", None)
+
+    if media_type == "MessageMediaGeo":
+        return "location", Attachment("location", "location", None)
+
+    if media_type == "MessageMediaPoll":
+        return "poll", Attachment("poll", "poll", None)
+
+    # fall-through for anything else (MessageMediaInvoice, MessageMediaDice, ...)
+    friendly = media_type.removeprefix("MessageMedia").lower() or "media"
+    return friendly, Attachment(friendly, friendly, None)

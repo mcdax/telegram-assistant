@@ -76,6 +76,19 @@ draft          = "/draft"
 auto_draft_on  = "/auto_draft on"
 auto_draft_off = "/auto_draft off"
 
+# Optional: use a dedicated OpenAI-compatible backend for drafting instead of
+# the top-level [llm] (Pydantic AI) path. When ALL of base_url, model, and
+# api_key_env are set AND the named env var is populated, the drafting module
+# sends a structured JSON payload (chat id, per-message sender_id, is_me,
+# type, attachment descriptor) directly to this endpoint. Works with OpenAI
+# itself, Azure OpenAI, OpenRouter, self-hosted proxies, Ollama's /v1 shim,
+# etc. Unset this block (or leave a field blank) to fall back to [llm].
+# [modules.drafting.openai]
+# base_url       = "https://api.openai.com/v1"
+# api_key_env    = "DRAFTING_OPENAI_API_KEY"   # name of the env var holding the key
+# model          = "gpt-4o-mini"
+# system_prompt  = "You are drafting a reply in the user's voice..."  # optional; falls back to default_system_prompt above
+
 # Optional per-chat overrides. Positive IDs (users) use bare keys; negative
 # IDs (supergroups/channels) MUST be quoted.
 # [modules.drafting.chats."12345"]

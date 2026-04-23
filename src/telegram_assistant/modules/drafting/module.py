@@ -25,6 +25,7 @@ from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
 
+from .openai_drafter import OpenAIDrafter, load_openai_config
 from .pipeline import Pipeline
 
 
@@ -51,6 +52,10 @@ class DraftingModule:
         # for this chat; used to suppress auto-draft writes that would
         # overwrite the user's in-progress typing.
         self._user_drafting: dict[int, bool] = {}
+        # Optional OpenAI-compatible drafting backend. Built at init() if
+        # [modules.drafting.openai] is fully configured; otherwise None and
+        # we fall back to the Pydantic AI Pipeline path.
+        self._openai_drafter: OpenAIDrafter | None = None
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
@@ -79,6 +84,19 @@ class DraftingModule:
         self._auto_draft_seed = {int(c) for c in cfg.get("auto_draft_chats", [])}
         self._per_chat = cfg.get("chats", {})
         self._debounce_s = int(cfg.get("auto_draft_debounce_s", DEFAULT_DEBOUNCE_S))
+
+        openai_config = load_openai_config(
+            cfg.get("openai"),
+            fallback_system_prompt=cfg["default_system_prompt"],
+        )
+        if openai_config is not None:
+            ctx.log.info(
+                "using OpenAI backend base_url=%s model=%s",
+                openai_config.base_url, openai_config.model,
+            )
+            self._openai_drafter = OpenAIDrafter.from_config(
+                openai_config, timeout_s=int(cfg.get("openai_timeout_s", 30)),
+            )
 
     async def shutdown(self) -> None:
         for task in list(self._pending.values()):
@@ -249,11 +267,19 @@ class DraftingModule:
         )
         history = await self._ctx.tg.fetch_history(chat_id, last_n)
         self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
-        pipeline = Pipeline(llm=self._ctx.llm, system_prompt=system_prompt)
         try:
-            output = await pipeline.run(
-                enrichment="", history=history, instruction=instruction
-            )
+            if self._openai_drafter is not None:
+                output = await self._openai_drafter.draft(
+                    chat_id=chat_id,
+                    chat_title=chat_title,
+                    history=history,
+                    instruction=instruction,
+                )
+            else:
+                pipeline = Pipeline(llm=self._ctx.llm, system_prompt=system_prompt)
+                output = await pipeline.run(
+                    enrichment="", history=history, instruction=instruction
+                )
         except Exception as e:
             self._ctx.log.warning("drafting failed chat=%s: %s", chat_id, e)
             return

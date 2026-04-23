@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from telegram_assistant.events import Message
+from telegram_assistant.events import Attachment, Message
 
 
 @dataclass
@@ -69,6 +69,9 @@ def make_message(
     text: str,
     message_id: int = 1,
     outgoing: bool = False,
+    sender_id: int | None = None,
+    message_type: str = "text",
+    attachment: Attachment | None = None,
 ) -> Message:
     return Message(
         chat_id=chat_id,
@@ -77,4 +80,7 @@ def make_message(
         timestamp=datetime(2026, 4, 19, 10, 0, tzinfo=timezone.utc),
         text=text,
         outgoing=outgoing,
+        sender_id=sender_id,
+        message_type=message_type,
+        attachment=attachment,
     )

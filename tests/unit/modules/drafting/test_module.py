@@ -386,6 +386,69 @@ async def test_outgoing_clears_user_drafting(tmp_path: Path):
     await ctx.http.close()
 
 
+async def test_openai_drafter_is_used_when_configured(tmp_path: Path, monkeypatch):
+    """When [modules.drafting.openai] is fully set, the OpenAI drafter is
+    built and its output reaches the draft slot instead of the default path."""
+    import json
+
+    from telegram_assistant.modules.drafting.openai_drafter import OpenAIDrafter
+    from tests.fakes.llm import fake_llm
+
+    monkeypatch.setenv("TEST_OPENAI_KEY", "sk-abc")
+
+    cfg = _module_config(
+        auto_draft_chats=[1],
+        openai={
+            "base_url": "https://api.example/v1",
+            "api_key_env": "TEST_OPENAI_KEY",
+            "model": "m1",
+            "system_prompt": "sys",
+        },
+    )
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, cfg)
+    tg.seed_history(1, [make_message(1, "alice", "hi", sender_id=777)])
+    await mod.init(ctx)
+    assert mod._openai_drafter is not None  # type: ignore[attr-defined]
+
+    # Replace the drafter's factory with a test-model factory so we don't hit
+    # the real OpenAIChatModel HTTP transport. The system prompt passed in
+    # from the config block is preserved on the drafter instance.
+    captured: dict[str, str] = {}
+
+    class _CapturingFactory:
+        def agent(self, system_prompt: str):
+            captured["system_prompt"] = system_prompt
+            return "agent-sentinel"
+
+        async def run(self, agent, user_text: str) -> str:  # noqa: ARG002
+            captured["user_text"] = user_text
+            return "OPENAI OUTPUT"
+
+    mod._openai_drafter = OpenAIDrafter(  # type: ignore[attr-defined]
+        factory=_CapturingFactory(),  # type: ignore[arg-type]
+        system_prompt="sys",
+    )
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+
+    assert tg.drafts[1] == "OPENAI OUTPUT"
+    assert captured["system_prompt"] == "sys"
+    # The user text the LLM received is our structured JSON payload.
+    payload = json.loads(captured["user_text"])
+    assert payload["chat_id"] == 1
+    assert [m["is_me"] for m in payload["messages"]] == [False]
+    await ctx.http.close()
+
+
+async def test_openai_drafter_not_built_when_config_missing(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, _, _ = await _ctx(tmp_path, _module_config())
+    await mod.init(ctx)
+    assert mod._openai_drafter is None  # type: ignore[attr-defined]
+    await ctx.http.close()
+
+
 async def test_shutdown_cancels_pending_tasks(tmp_path: Path):
     import asyncio
 
