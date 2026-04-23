@@ -43,7 +43,6 @@ async def test_loads_enabled_modules(tmp_path: Path):
             "default_system_prompt": "x",
             "last_n": 10,
             "auto_draft_chats": [],
-            "enrichment_url": "",
             "markers": {},
         },
         "correcting": {"enabled": True, "system_prompt": "x"},
@@ -59,7 +58,6 @@ async def test_skips_disabled(tmp_path: Path):
     loader = ModuleLoader()
     registry = MarkerRegistry()
     modules_cfg = {
-        "drafting": {"enabled": False, "default_system_prompt": "x", "last_n": 10, "auto_draft_chats": [], "enrichment_url": "", "markers": {}},
         "correcting": {"enabled": True, "system_prompt": "x"},
     }
     loaded = await loader.load(modules_cfg, registry, make)
@@ -87,7 +85,6 @@ async def test_markers_collected_into_registry(tmp_path: Path):
                 "default_system_prompt": "x",
                 "last_n": 10,
                 "auto_draft_chats": [],
-                "enrichment_url": "",
                 "markers": {},
             },
             "correcting": {"enabled": True, "system_prompt": "x"},
@@ -156,7 +153,6 @@ async def test_duplicate_marker_across_modules_raises(tmp_path: Path):
                     "default_system_prompt": "x",
                     "last_n": 10,
                     "auto_draft_chats": [],
-                    "enrichment_url": "",
                     "markers": {"draft": "/x"},
                 },
                 "correcting": {

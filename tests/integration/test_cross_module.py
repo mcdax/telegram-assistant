@@ -37,7 +37,6 @@ async def test_drafting_and_media_reply_both_fire(tmp_path: Path):
                 "default_system_prompt": "SP",
                 "last_n": 5,
                 "auto_draft_chats": [42],
-                "enrichment_url": "",
                 "markers": {},
             },
             "media_reply": {

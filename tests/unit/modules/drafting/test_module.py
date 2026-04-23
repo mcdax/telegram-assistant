@@ -24,9 +24,6 @@ def _module_config(**overrides: Any) -> dict[str, Any]:
         "default_system_prompt": "SP",
         "last_n": 3,
         "auto_draft_chats": [],
-        "enrichment_url": "",
-        "enrichment_auth_header": "",
-        "enrichment_timeout_s": 5,
         "markers": {"draft": "/draft", "auto_draft_on": "/auto_draft on", "auto_draft_off": "/auto_draft off"},
     }
     base.update(overrides)

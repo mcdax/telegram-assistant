@@ -20,7 +20,6 @@ async def test_auto_on_then_incoming_drafts(tmp_path: Path):
             "default_system_prompt": "SP",
             "last_n": 5,
             "auto_draft_chats": [],
-            "enrichment_url": "",
             "markers": {},
         }
     }

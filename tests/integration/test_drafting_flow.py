@@ -20,7 +20,6 @@ async def test_auto_draft_end_to_end(tmp_path: Path):
             "default_system_prompt": "SP",
             "last_n": 5,
             "auto_draft_chats": [42],
-            "enrichment_url": "",
             "markers": {},
         }
     }

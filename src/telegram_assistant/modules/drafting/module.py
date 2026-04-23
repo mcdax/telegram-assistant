@@ -25,7 +25,6 @@ from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
 
-from .enricher import Enricher
 from .pipeline import Pipeline
 
 
@@ -80,12 +79,6 @@ class DraftingModule:
         self._auto_draft_seed = {int(c) for c in cfg.get("auto_draft_chats", [])}
         self._per_chat = cfg.get("chats", {})
         self._debounce_s = int(cfg.get("auto_draft_debounce_s", DEFAULT_DEBOUNCE_S))
-        self._enricher = Enricher(
-            http=ctx.http,
-            url=cfg.get("enrichment_url", ""),
-            auth_header=cfg.get("enrichment_auth_header") or None,
-            timeout_s=int(cfg.get("enrichment_timeout_s", 10)),
-        )
 
     async def shutdown(self) -> None:
         for task in list(self._pending.values()):
@@ -256,12 +249,10 @@ class DraftingModule:
         )
         history = await self._ctx.tg.fetch_history(chat_id, last_n)
         self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
-        enrichment = await self._enricher.fetch(chat_id, chat_title, history)
-        self._ctx.log.debug("enrichment chat=%s len=%d", chat_id, len(enrichment))
         pipeline = Pipeline(llm=self._ctx.llm, system_prompt=system_prompt)
         try:
             output = await pipeline.run(
-                enrichment=enrichment, history=history, instruction=instruction
+                enrichment="", history=history, instruction=instruction
             )
         except Exception as e:
             self._ctx.log.warning("drafting failed chat=%s: %s", chat_id, e)

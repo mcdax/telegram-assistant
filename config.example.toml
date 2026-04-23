@@ -4,9 +4,8 @@
 # empty /data volume causes the entrypoint to seed this template for you;
 # fill in the placeholders below and restart.
 #
-# Secret values (api_id, api_hash, LLM API keys, enrichment auth header)
-# should be treated as credentials — do not commit this file to version
-# control.
+# Secret values (api_id, api_hash, LLM API keys) should be treated as
+# credentials — do not commit this file to version control.
 
 [telegram]
 # Your Telegram API credentials. Obtain them at https://my.telegram.org
@@ -44,9 +43,8 @@ timeout_s = 30
 
 
 # ---------- Module: drafting ----------
-# Drafts replies in your voice using the chat history, an optional external
-# enrichment endpoint (calendar/email/notes), and the LLM. Owns the /draft
-# marker and the /auto on|off runtime toggles for auto-drafting.
+# Drafts replies in your voice using the chat history and an LLM. Owns the
+# /draft marker and the /auto_draft on|off runtime toggles for auto-drafting.
 [modules.drafting]
 enabled = true
 
@@ -70,13 +68,6 @@ auto_draft_chats = []
 # chat has been silent for this long. Sending a message yourself clears
 # the cooldown. Set to 0 to disable debouncing (draft on every message).
 auto_draft_debounce_s = 60
-
-# Optional external enrichment service. When set, each draft POSTs the
-# last-N messages and uses the response as extra context. Leave empty to
-# draft from chat history alone.
-enrichment_url = ""
-enrichment_auth_header = ""
-enrichment_timeout_s = 10
 
 # Trigger strings for this module's markers. Keys are the stable internal
 # names; values are whatever you want to type in your Telegram input.
