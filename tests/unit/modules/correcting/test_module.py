@@ -231,3 +231,49 @@ async def test_outgoing_skipped_when_corrected_equals_original(tmp_path: Path):
     await mod.on_outgoing_message(_outgoing(9, "already correct"))
     assert tg.edits == []
     await ctx.http.close()
+
+
+async def test_outgoing_fix_marker_edits_without_autofixsent(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    # auto_fix_sent is NOT on — but /fix in the sent text should still trigger an edit.
+    await mod.on_outgoing_message(_outgoing(9, "/fix hi how ar you", message_id=50))
+    assert len(tg.edits) == 1
+    assert tg.edits[0].chat_id == 9
+    assert tg.edits[0].message_id == 50
+    assert tg.edits[0].text == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_outgoing_fix_marker_strips_remainder_correctly(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    await mod.on_outgoing_message(
+        _outgoing(9, "please /fix thsi is a tset", message_id=51)
+    )
+    # Remainder is "please thsi is a tset" — the LLM returns "CORRECTED" for any input.
+    assert tg.edits[0].text == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_outgoing_fix_marker_wins_over_autofixsent(tmp_path: Path):
+    # When both paths would activate, /fix takes precedence — single edit fired.
+    mod = CorrectingModule()
+    ctx, tg, state = await _ctx(tmp_path)
+    state.for_module("correcting").set("auto_fix_sent", "9", True)
+    await mod.init(ctx)
+    await mod.on_outgoing_message(_outgoing(9, "/fix hi how ar you", message_id=52))
+    assert len(tg.edits) == 1
+    await ctx.http.close()
+
+
+async def test_outgoing_fix_marker_empty_remainder_no_edit(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    # "/fix" alone — remainder empty, nothing to correct.
+    await mod.on_outgoing_message(_outgoing(9, "/fix", message_id=53))
+    assert tg.edits == []
+    await ctx.http.close()

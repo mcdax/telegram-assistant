@@ -1,7 +1,10 @@
 """Correcting module.
 
 Owns:
-  /fix                 — one-shot rewrite of the draft text's remainder
+  /fix                 — one-shot rewrite. If seen in a draft: overwrite the
+                         draft with the corrected remainder. If seen in an
+                         already-sent message: edit the sent message in place
+                         with the corrected remainder.
   /auto_fix on|off     — toggle per-chat pre-send autofix (rewrites every draft)
   /auto_fix_sent on|off — toggle per-chat post-send autofix (edits every sent message)
 """
@@ -97,9 +100,21 @@ class CorrectingModule:
         await self._ctx.tg.write_draft(event.chat_id, corrected)
 
     async def on_outgoing_message(self, event: OutgoingMessage) -> None:
-        """Post-send autofix: edit sent messages in chats where auto_fix_sent is on."""
+        """Post-send corrections:
+           1. If the sent text contains the /fix marker → strip the marker,
+              correct the remainder, edit the sent message in place.
+           2. Otherwise, if auto_fix_sent is on for this chat → correct the
+              full text and edit the sent message.
+        The /fix path takes precedence so explicit invocations win over the
+        per-chat blanket toggle.
+        """
         assert self._ctx is not None
         msg = event.message
+        fix_marker = self._fix_marker()
+        matched, remainder = fix_marker.match(msg.text) if fix_marker else (False, None)
+        if matched:
+            await self._fix_sent_via_marker(msg.chat_id, msg.message_id, remainder or "")
+            return
         if not self._is_on(msg.chat_id, _AUTO_FIX_SENT_BUCKET):
             return
         text = msg.text.strip()
@@ -116,6 +131,32 @@ class CorrectingModule:
             )
             return
         await self._ctx.tg.edit_message(msg.chat_id, msg.message_id, corrected)
+
+    async def _fix_sent_via_marker(
+        self, chat_id: int, message_id: int, remainder: str
+    ) -> None:
+        assert self._ctx is not None
+        text = remainder.strip()
+        if not text:
+            self._ctx.log.info(
+                "/fix in sent message chat=%s id=%s: empty remainder — ignored",
+                chat_id, message_id,
+            )
+            return
+        self._ctx.log.debug(
+            "/fix in sent message chat=%s id=%s remainder_len=%d",
+            chat_id, message_id, len(text),
+        )
+        corrected = await self._correct(text)
+        if corrected is None:
+            return
+        await self._ctx.tg.edit_message(chat_id, message_id, corrected)
+
+    def _fix_marker(self) -> Marker | None:
+        for m in self._markers:
+            if m.name == "fix":
+                return m
+        return None
 
     async def _fix_remainder(self, chat_id: int, remainder: str) -> None:
         assert self._ctx is not None
