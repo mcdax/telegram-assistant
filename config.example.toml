@@ -80,14 +80,18 @@ auto_draft_off = "/auto_draft off"
 # the top-level [llm] (Pydantic AI) path. When ALL of base_url, model, and
 # api_key_env are set AND the named env var is populated, the drafting module
 # sends a structured JSON payload (chat id, per-message sender_id, is_me,
-# type, attachment descriptor) directly to this endpoint. Works with OpenAI
-# itself, Azure OpenAI, OpenRouter, self-hosted proxies, Ollama's /v1 shim,
-# etc. Unset this block (or leave a field blank) to fall back to [llm].
+# type, attachment descriptor) to this endpoint. Works with OpenAI itself,
+# Azure OpenAI, OpenRouter, self-hosted proxies, Ollama's /v1 shim, etc.
+# Unset this block (or leave a field blank) to fall back to [llm].
+#
+# The `instruction` text is prepended to the user message above the JSON
+# payload (no system-role message is sent). Falls back to
+# default_system_prompt above if omitted.
 # [modules.drafting.openai]
-# base_url       = "https://api.openai.com/v1"
-# api_key_env    = "DRAFTING_OPENAI_API_KEY"   # name of the env var holding the key
-# model          = "gpt-4o-mini"
-# system_prompt  = "You are drafting a reply in the user's voice..."  # optional; falls back to default_system_prompt above
+# base_url    = "https://api.openai.com/v1"
+# api_key_env = "DRAFTING_OPENAI_API_KEY"   # name of the env var holding the key
+# model       = "gpt-4o-mini"
+# instruction = "You are drafting a reply in the user's voice..."  # optional
 
 # Optional per-chat overrides. Positive IDs (users) use bare keys; negative
 # IDs (supergroups/channels) MUST be quoted.

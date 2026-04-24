@@ -1,12 +1,17 @@
 """Per-module OpenAI-compatible drafting backend.
 
-Uses Pydantic AI's ``OpenAIProvider`` + ``OpenAIModel`` under the hood —
-the same abstraction the correcting module uses — just configured with
+Uses Pydantic AI's ``OpenAIProvider`` + ``OpenAIChatModel`` under the hood
+— the same abstraction the correcting module uses — just configured with
 a caller-provided ``base_url``, ``api_key``, ``model``, and
-``system_prompt``. The value-add vs. the default drafting path is the
+``instruction``. The value-add vs. the default drafting path is the
 **structured JSON payload**: chat_id + per-message sender_id / is_me /
 type / attachment descriptor, so the model sees every signal it could
 need to draft a response.
+
+The ``instruction`` text is prepended to the user message (ahead of the
+JSON payload) rather than sent as a ``system`` role message, so the
+whole prompt is visible in one place when browsing provider logs and
+there is no reliance on the endpoint honouring system-role semantics.
 
 Config lives under ``[modules.drafting.openai]`` — see
 ``load_openai_config`` for the validation rules.
@@ -34,11 +39,11 @@ class OpenAIConfig:
     base_url: str
     api_key: str
     model: str
-    system_prompt: str
+    instruction: str
 
 
 def load_openai_config(
-    section: dict[str, Any] | None, fallback_system_prompt: str
+    section: dict[str, Any] | None, fallback_instruction: str
 ) -> OpenAIConfig | None:
     """Return a validated ``OpenAIConfig``, or None if the section is incomplete.
 
@@ -47,8 +52,8 @@ def load_openai_config(
         Any missing → ``None`` (caller falls back to the default backend).
       * ``api_key_env`` names the env var that holds the actual key. The
         key itself is never written to ``config.toml``.
-      * ``system_prompt`` is optional; falls back to the caller-supplied
-        ``fallback_system_prompt`` when absent.
+      * ``instruction`` is optional; falls back to the caller-supplied
+        ``fallback_instruction`` when absent.
     """
     if not section:
         return None
@@ -65,12 +70,12 @@ def load_openai_config(
             api_key_env,
         )
         return None
-    system_prompt = section.get("system_prompt") or fallback_system_prompt
+    instruction = section.get("instruction") or fallback_instruction
     return OpenAIConfig(
         base_url=base_url,
         api_key=api_key,
         model=model,
-        system_prompt=system_prompt,
+        instruction=instruction,
     )
 
 
@@ -116,26 +121,26 @@ def build_payload(
 class OpenAIDrafter:
     """Light wrapper: feeds ``build_payload`` JSON through an ``LLMFactory``.
 
-    The factory can be an ``OpenAIModel`` + ``OpenAIProvider`` pair built
-    from an ``OpenAIConfig`` (see ``from_config``) — or any Pydantic AI
-    model wrapped in an ``LLMFactory``, which makes the class trivial to
-    test with ``TestModel``.
+    The factory can be an ``OpenAIChatModel`` + ``OpenAIProvider`` pair
+    built from an ``OpenAIConfig`` (see ``from_config``) — or any Pydantic
+    AI model wrapped in an ``LLMFactory``, which makes the class trivial
+    to test with ``TestModel``.
     """
 
-    def __init__(self, *, factory: LLMFactory, system_prompt: str) -> None:
+    def __init__(self, *, factory: LLMFactory, instruction: str) -> None:
         self._factory = factory
-        self._system_prompt = system_prompt
+        self._instruction = instruction
 
     @classmethod
     def from_config(cls, config: OpenAIConfig, *, timeout_s: int) -> "OpenAIDrafter":
         provider = OpenAIProvider(base_url=config.base_url, api_key=config.api_key)
         model = OpenAIChatModel(model_name=config.model, provider=provider)
         factory = LLMFactory(model=model, timeout_s=timeout_s)
-        return cls(factory=factory, system_prompt=config.system_prompt)
+        return cls(factory=factory, instruction=config.instruction)
 
     @property
-    def system_prompt(self) -> str:
-        return self._system_prompt
+    def instruction(self) -> str:
+        return self._instruction
 
     async def draft(
         self,
@@ -151,12 +156,20 @@ class OpenAIDrafter:
             history=history,
             instruction=instruction,
         )
-        user_content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        json_content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        # Prepend the configured instruction to the user message rather than
+        # sending it as a separate system-role message. Keeps the whole prompt
+        # visible in one place and avoids surprises with endpoints that treat
+        # the system role differently.
+        if self._instruction.strip():
+            user_content = f"{self._instruction.strip()}\n\n{json_content}"
+        else:
+            user_content = json_content
         log.debug(
-            "openai drafter request payload_len=%d history=%d",
-            len(user_content), len(payload["messages"]),
+            "openai drafter request payload_len=%d history=%d instruction_len=%d",
+            len(user_content), len(payload["messages"]), len(self._instruction),
         )
-        agent = self._factory.agent(self._system_prompt)
+        agent = self._factory.agent("")  # no system message
         output = await self._factory.run(agent, user_content)
         log.debug("openai drafter response len=%d", len(output))
         return output

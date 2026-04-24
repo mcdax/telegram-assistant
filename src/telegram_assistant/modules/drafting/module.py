@@ -87,7 +87,7 @@ class DraftingModule:
 
         openai_config = load_openai_config(
             cfg.get("openai"),
-            fallback_system_prompt=cfg["default_system_prompt"],
+            fallback_instruction=cfg["default_system_prompt"],
         )
         if openai_config is not None:
             ctx.log.info(

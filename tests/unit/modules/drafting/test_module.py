@@ -402,7 +402,7 @@ async def test_openai_drafter_is_used_when_configured(tmp_path: Path, monkeypatc
             "base_url": "https://api.example/v1",
             "api_key_env": "TEST_OPENAI_KEY",
             "model": "m1",
-            "system_prompt": "sys",
+            "instruction": "be concise",
         },
     )
     mod = DraftingModule()
@@ -411,9 +411,9 @@ async def test_openai_drafter_is_used_when_configured(tmp_path: Path, monkeypatc
     await mod.init(ctx)
     assert mod._openai_drafter is not None  # type: ignore[attr-defined]
 
-    # Replace the drafter's factory with a test-model factory so we don't hit
-    # the real OpenAIChatModel HTTP transport. The system prompt passed in
-    # from the config block is preserved on the drafter instance.
+    # Replace the drafter's factory with a capturing one so we don't hit
+    # the real OpenAIChatModel HTTP transport. The instruction passed in
+    # via the config block is preserved on the drafter instance.
     captured: dict[str, str] = {}
 
     class _CapturingFactory:
@@ -427,15 +427,16 @@ async def test_openai_drafter_is_used_when_configured(tmp_path: Path, monkeypatc
 
     mod._openai_drafter = OpenAIDrafter(  # type: ignore[attr-defined]
         factory=_CapturingFactory(),  # type: ignore[arg-type]
-        system_prompt="sys",
+        instruction="be concise",
     )
 
     await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
 
     assert tg.drafts[1] == "OPENAI OUTPUT"
-    assert captured["system_prompt"] == "sys"
-    # The user text the LLM received is our structured JSON payload.
-    payload = json.loads(captured["user_text"])
+    assert captured["system_prompt"] == ""  # no system-role message
+    # User text = instruction line, blank line, then JSON payload.
+    assert captured["user_text"].startswith("be concise\n\n")
+    payload = json.loads(captured["user_text"].split("\n\n", 1)[1])
     assert payload["chat_id"] == 1
     assert [m["is_me"] for m in payload["messages"]] == [False]
     await ctx.http.close()
