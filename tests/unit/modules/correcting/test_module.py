@@ -83,6 +83,44 @@ async def test_fix_rewrites_remainder(tmp_path: Path):
     await ctx.http.close()
 
 
+async def test_fix_writes_even_when_llm_unchanged_to_strip_marker(tmp_path: Path):
+    # /fix in draft: even when the LLM returns the remainder unchanged, we
+    # still write the draft so the /fix marker is removed.
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=fake_llm("already correct"), http=ctx.http,
+        config=ctx.config, state=ctx.state, log=ctx.log,
+    )
+    await mod.init(ctx)
+    match = MarkerMatch(
+        module="correcting", marker=_marker(mod, "fix"), remainder="already correct",
+    )
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/fix already correct"), match,
+    )
+    assert tg.drafts[5] == "already correct"
+    await ctx.http.close()
+
+
+async def test_outgoing_fix_marker_edits_even_when_llm_unchanged(tmp_path: Path):
+    # /fix in sent message: even when the LLM returns the remainder unchanged,
+    # we still edit to strip the /fix marker from what others see.
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=fake_llm("already correct"), http=ctx.http,
+        config=ctx.config, state=ctx.state, log=ctx.log,
+    )
+    await mod.init(ctx)
+    await mod.on_outgoing_message(
+        _outgoing(9, "/fix already correct", message_id=60),
+    )
+    assert len(tg.edits) == 1
+    assert tg.edits[0].text == "already correct"
+    await ctx.http.close()
+
+
 async def test_fix_empty_remainder_ignored(tmp_path: Path):
     mod = CorrectingModule()
     ctx, tg, _ = await _ctx(tmp_path)
@@ -167,6 +205,21 @@ async def test_plain_draft_unchanged_text_does_not_overwrite(tmp_path: Path):
     # Swap the llm's canned response to match the input exactly.
     ctx = ModuleContext(
         tg=ctx.tg, llm=fake_llm("already correct"), http=ctx.http,
+        config=ctx.config, state=ctx.state, log=ctx.log,
+    )
+    await mod.init(ctx)
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=7, text="already correct"))
+    assert tg.drafts == {}
+    await ctx.http.close()
+
+
+async def test_plain_draft_skip_is_whitespace_tolerant(tmp_path: Path):
+    # LLMs commonly add/strip a trailing newline. Treat that as "no change".
+    mod = CorrectingModule()
+    ctx, tg, state = await _ctx(tmp_path)
+    state.for_module("correcting").set("auto_fix", "7", True)
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=fake_llm("already correct\n"), http=ctx.http,
         config=ctx.config, state=ctx.state, log=ctx.log,
     )
     await mod.init(ctx)

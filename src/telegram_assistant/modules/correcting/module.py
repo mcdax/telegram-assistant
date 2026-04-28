@@ -95,7 +95,10 @@ class CorrectingModule:
             return
         self._ctx.log.debug("auto_fix rewriting draft chat=%s input_len=%d", event.chat_id, len(text))
         corrected = await self._correct(text)
-        if corrected is None or corrected == event.text:
+        if corrected is None:
+            return
+        if corrected.strip() == text:
+            self._ctx.log.debug("auto_fix: llm returned same text chat=%s — skipping", event.chat_id)
             return
         await self._ctx.tg.write_draft(event.chat_id, corrected)
 
@@ -125,9 +128,12 @@ class CorrectingModule:
             msg.chat_id, msg.message_id, len(text),
         )
         corrected = await self._correct(text)
-        if corrected is None or corrected == msg.text:
+        if corrected is None:
+            return
+        if corrected.strip() == text:
             self._ctx.log.debug(
-                "auto_fix_sent: no change for chat=%s id=%s", msg.chat_id, msg.message_id
+                "auto_fix_sent: llm returned same text chat=%s id=%s — skipping",
+                msg.chat_id, msg.message_id,
             )
             return
         await self._ctx.tg.edit_message(msg.chat_id, msg.message_id, corrected)
@@ -150,6 +156,8 @@ class CorrectingModule:
         corrected = await self._correct(text)
         if corrected is None:
             return
+        # Even if the LLM returned identical text, we still edit so the
+        # /fix marker is removed from the sent message.
         await self._ctx.tg.edit_message(chat_id, message_id, corrected)
 
     def _fix_marker(self) -> Marker | None:
@@ -167,6 +175,8 @@ class CorrectingModule:
         corrected = await self._correct(text)
         if corrected is None:
             return
+        # Even if the LLM returned identical text, we still write so the
+        # /fix marker is removed from the draft.
         await self._ctx.tg.write_draft(chat_id, corrected)
 
     async def _correct(self, text: str) -> str | None:
