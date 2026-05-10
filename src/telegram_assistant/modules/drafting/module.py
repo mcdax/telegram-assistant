@@ -95,7 +95,7 @@ class DraftingModule:
                 openai_config.base_url, openai_config.model,
             )
             self._openai_drafter = OpenAIDrafter.from_config(
-                openai_config, timeout_s=int(cfg.get("openai_timeout_s", 30)),
+                openai_config, timeout_s=int(cfg.get("openai_timeout_s", 120)),
             )
 
     async def shutdown(self) -> None:

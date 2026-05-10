@@ -92,6 +92,13 @@ auto_draft_off = "/auto_draft off"
 # api_key_env = "DRAFTING_OPENAI_API_KEY"   # name of the env var holding the key
 # model       = "gpt-4o-mini"
 # instruction = "You are drafting a reply in the user's voice..."  # optional
+#
+# Per-call timeout for this backend, in seconds. Default 120. Bumped above
+# the [llm] timeout because self-hosted backends (ollama, vLLM, llama.cpp)
+# often need more time, especially on the first request after start when
+# the model is loaded into memory. Lower it for cloud endpoints if you
+# prefer to fail fast.
+# openai_timeout_s = 120
 
 # Optional per-chat overrides. Positive IDs (users) use bare keys; negative
 # IDs (supergroups/channels) MUST be quoted.
