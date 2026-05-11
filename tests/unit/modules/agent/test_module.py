@@ -257,6 +257,59 @@ async def test_run_clears_draft_calls_llm_and_sends_to_bot(
     await http.close()
 
 
+# ---------- run flow: send-disabled + empty instruction ----------
+
+async def test_run_send_disabled_runs_llm_and_logs_but_skips_bot(
+    tmp_path: Path, monkeypatch, caplog
+):
+    """No bot token → LLM still runs; no bot send; output logged at INFO."""
+    monkeypatch.delenv("AGENT_BOT_TOKEN", raising=False)
+    sent: list[dict] = []
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"chat_id": chat_id, "text": text})
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(tmp_path)
+    from tests.fakes.telegram import make_message
+    tg.seed_history(5, [make_message(5, "alice", "hi")])
+    tg.drafts[5] = "/agent x"
+    await mod.init(ctx)
+
+    match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
+    with caplog.at_level(logging.INFO):
+        await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
+        await asyncio.sleep(0.2)
+
+    assert tg.drafts[5] == ""
+    assert sent == []
+    assert any("AGENT REPLY" in r.message for r in caplog.records)
+    await http.close()
+
+
+async def test_run_empty_instruction_clears_draft_and_skips_llm(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    sent: list[dict] = []
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"chat_id": chat_id, "text": text})
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(tmp_path)
+    tg.drafts[5] = "/agent"
+    await mod.init(ctx)
+
+    match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="")
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent"), match)
+    await asyncio.sleep(0.2)
+
+    assert tg.drafts[5] == ""
+    assert sent == []
+    await http.close()
+
+
 async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
     mod = AgentModule()
