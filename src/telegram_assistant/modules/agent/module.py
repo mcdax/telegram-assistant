@@ -19,6 +19,7 @@ posted to Telegram.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, Awaitable, Callable
 
@@ -27,6 +28,7 @@ import aiohttp
 from telegram_assistant.events import DraftUpdate
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
+from telegram_assistant.modules.drafting.openai_drafter import build_payload
 
 from . import bot_sender as _bot_sender
 
@@ -138,5 +140,94 @@ class AgentModule:
                 self._pending.pop(chat_id, None)
 
     async def _run(self, chat_id: int) -> None:
-        # Filled in later tasks.
-        return
+        assert self._ctx is not None
+        instruction = self._pending_instruction.pop(chat_id, "").strip()
+
+        # Always clear the draft first so the user's input field is empty
+        # while the LLM works (which can take a long time on self-hosted
+        # backends).
+        await self._ctx.tg.write_draft(chat_id, "")
+
+        if not instruction:
+            self._ctx.log.debug(
+                "/agent in chat=%s: empty instruction — skipping", chat_id,
+            )
+            return
+
+        history = await self._ctx.tg.fetch_history(chat_id, self._last_n)
+        try:
+            output = await self._invoke_llm(
+                chat_id=chat_id,
+                history=history,
+                instruction=instruction,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._ctx.log.warning("/agent llm failed chat=%s: %s", chat_id, exc)
+            await self._post_error(f"❌ agent: {exc}")
+            return
+
+        if self.send_disabled:
+            self._ctx.log.info(
+                "/agent send-disabled — would post to chat=%s: %s",
+                self._target_chat_id, output,
+            )
+            return
+
+        # Narrow ``str | None`` to ``str`` for the type checker — by
+        # construction ``send_disabled`` being False means ``_bot_token``
+        # is set.
+        assert self._bot_token is not None
+        try:
+            await self._send_text(
+                self._ctx.http,
+                self._bot_token,
+                chat_id=self._target_chat_id,
+                text=output,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._ctx.log.warning("/agent bot send failed: %s", exc)
+
+    async def _invoke_llm(
+        self,
+        *,
+        chat_id: int,
+        history: list,
+        instruction: str,
+    ) -> str:
+        """Default-LLM path: ``ctx.llm`` with a structured user payload.
+
+        The OpenAI-compatible path (added in a later task) overrides this.
+        """
+        assert self._ctx is not None
+        payload = build_payload(
+            chat_id=chat_id,
+            chat_title="",
+            history=history,
+            instruction=instruction,
+        )
+        json_content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        if self._default_system_prompt.strip():
+            user_text = f"{self._default_system_prompt.strip()}\n\n{json_content}"
+        else:
+            user_text = json_content
+        agent = self._ctx.llm.agent("")
+        return await self._ctx.llm.run(agent, user_text)
+
+    async def _post_error(self, text: str) -> None:
+        if self.send_disabled:
+            return
+        assert self._ctx is not None
+        assert self._bot_token is not None
+        try:
+            await self._send_text(
+                self._ctx.http,
+                self._bot_token,
+                chat_id=self._target_chat_id,
+                text=text,
+            )
+        except Exception as exc:
+            self._ctx.log.warning("/agent error post failed: %s", exc)

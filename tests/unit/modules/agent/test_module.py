@@ -224,6 +224,39 @@ async def test_cancelled_task_does_not_pop_replacement(
     await http.close()
 
 
+# ---------- run flow happy path ----------
+
+async def test_run_clears_draft_calls_llm_and_sends_to_bot(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok-xyz")
+    sent: list[dict] = []
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"token": token, "chat_id": chat_id, "text": text})
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(tmp_path)
+    from tests.fakes.telegram import make_message
+    tg.seed_history(5, [
+        make_message(5, "alice", "hi", message_id=1),
+        make_message(5, "me", "hey", message_id=2, outgoing=True),
+    ])
+    tg.drafts[5] = "/agent summarize this"
+    await mod.init(ctx)
+    match = MarkerMatch(
+        module="agent", marker=mod.markers()[0], remainder="summarize this",
+    )
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent summarize this"), match)
+    await asyncio.sleep(0.2)
+    assert tg.drafts[5] == ""
+    assert len(sent) == 1
+    assert sent[0]["token"] == "tok-xyz"
+    assert sent[0]["chat_id"] == 999
+    assert sent[0]["text"] == "AGENT REPLY"
+    await http.close()
+
+
 async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
     mod = AgentModule()
