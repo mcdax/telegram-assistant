@@ -165,3 +165,10 @@ async def test_duplicate_marker_across_modules_raises(tmp_path: Path):
             make,
         )
     await http.close()
+
+
+def test_known_modules_includes_agent():
+    from telegram_assistant.module_loader import _known_modules
+    from telegram_assistant.modules.agent.module import AgentModule
+
+    assert _known_modules().get("agent") is AgentModule

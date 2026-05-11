@@ -173,3 +173,50 @@ backend = "yt_dlp"
 # name = "tiktok"
 # pattern = 'https?://(?:www\.)?tiktok\.com/@[\w.-]+/video/\d+'
 # backend = "yt_dlp"
+
+
+# ---------- Module: agent ----------
+# Relays "/agent <instruction>" typed in any chat's draft to a separate
+# Telegram chat via a bot account. Each keystroke restarts a short
+# debounce timer; once typing settles the draft is cleared, the recent
+# history of the SOURCE chat is fetched, the LLM is invoked, and the
+# response is posted to ``target_chat_id`` via ``bot_token_env``.
+#
+# If ``bot_token_env`` is not resolvable the module is "send-disabled":
+# the LLM still runs and its output is logged at INFO, but no bot send
+# happens. Useful for setup / dry-runs.
+[modules.agent]
+# Disabled by default — flip to true once you've created a bot, populated
+# bot_token_env in your environment, and set target_chat_id.
+enabled = false
+
+# Wait this many seconds after the last /agent keystroke before firing.
+debounce_s = 3
+
+# Number of recent messages from the SOURCE chat passed to the LLM.
+last_n = 20
+
+# Optional configured instruction prepended to the user's /agent text.
+# Empty string means "no system prompt" — only the user's text drives
+# the LLM. Per-call instruction is whatever the user typed after /agent.
+default_system_prompt = ""
+
+# Telegram Bot API: response is posted to ``target_chat_id`` via the bot
+# identified by the token in this env var. Create the bot via @BotFather;
+# ``target_chat_id`` is your own user id (positive) or a group id
+# (negative). The bot must be able to message that chat — DM the bot
+# once or add it to the group first.
+bot_token_env = "AGENT_BOT_TOKEN"
+target_chat_id = 0
+
+[modules.agent.markers]
+agent = "/agent"
+
+# Optional dedicated OpenAI-compatible backend (same shape as
+# [modules.drafting.openai]). Falls back to top-level [llm] if absent.
+# [modules.agent.openai]
+# base_url    = "https://api.openai.com/v1"
+# api_key_env = "AGENT_OPENAI_API_KEY"
+# model       = "gpt-4o-mini"
+# instruction = "..."                  # optional; overrides default_system_prompt
+# openai_timeout_s = 120               # optional, default 120

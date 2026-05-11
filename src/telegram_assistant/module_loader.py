@@ -16,11 +16,13 @@ class UnknownModuleError(KeyError):
 
 def _known_modules() -> dict[str, type]:
     # Imported lazily to avoid circular imports at module load.
+    from .modules.agent.module import AgentModule
     from .modules.correcting.module import CorrectingModule
     from .modules.drafting.module import DraftingModule
     from .modules.media_reply.module import MediaReplyModule
 
     return {
+        "agent": AgentModule,
         "drafting": DraftingModule,
         "correcting": CorrectingModule,
         "media_reply": MediaReplyModule,
