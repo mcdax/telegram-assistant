@@ -1,0 +1,109 @@
+"""Agent module. Owns the /agent marker.
+
+When the user types ``/agent <instruction>`` in any chat, the module:
+  1. Debounces — each keystroke restarts a short timer (default 3s).
+     Any prior in-flight run for the same chat is cancelled.
+  2. Once the timer expires it clears the draft, fetches the last N
+     messages of the source chat, calls the LLM, and posts the response
+     to a configured Telegram bot chat.
+
+The LLM resolution mirrors the drafting module: an optional
+``[modules.agent.openai]`` block routes through ``OpenAIDrafter``;
+otherwise the default Pydantic AI ``[llm]`` factory is used.
+
+If the configured ``bot_token_env`` does not resolve to a value the
+module is "send-disabled": the LLM still runs (so the user can validate
+the pipeline end-to-end), but the response is logged at INFO instead of
+posted to Telegram.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any, Awaitable, Callable
+
+import aiohttp
+
+from telegram_assistant.events import DraftUpdate
+from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
+from telegram_assistant.module import ModuleContext
+
+from . import bot_sender as _bot_sender
+
+
+SendText = Callable[..., Awaitable[None]]
+
+
+class AgentModule:
+    name = "agent"
+
+    def __init__(self, *, send_text: SendText | None = None) -> None:
+        self._ctx: ModuleContext | None = None
+        self._markers: list[Marker] = []
+        self._send_text: SendText = send_text or _bot_sender.send_text
+        self._bot_token: str | None = None
+        self._target_chat_id: int = 0
+        self._debounce_s: float = 3.0
+        self._last_n: int = 20
+        self._default_system_prompt: str = ""
+        self._pending: dict[int, asyncio.Task[None]] = {}
+        self._pending_instruction: dict[int, str] = {}
+
+    @property
+    def send_disabled(self) -> bool:
+        return self._bot_token is None
+
+    async def init(self, ctx: ModuleContext) -> None:
+        self._ctx = ctx
+        cfg = ctx.config
+
+        target = int(cfg.get("target_chat_id", 0))
+        if target == 0:
+            raise ValueError(
+                "agent module: target_chat_id must be a non-zero integer"
+            )
+        self._target_chat_id = target
+
+        bot_token_env = cfg.get("bot_token_env") or ""
+        token = os.environ.get(bot_token_env) if bot_token_env else None
+        if not token:
+            ctx.log.warning(
+                "agent module: bot_token_env=%r not resolvable; "
+                "send-disabled — LLM still runs but responses are logged "
+                "at INFO instead of posted",
+                bot_token_env,
+            )
+        self._bot_token = token
+
+        self._debounce_s = float(cfg.get("debounce_s", 3))
+        self._last_n = int(cfg.get("last_n", 20))
+        self._default_system_prompt = cfg.get("default_system_prompt", "") or ""
+
+        user_markers = cfg.get("markers", {})
+        self._markers = [
+            Marker(
+                name="agent",
+                trigger=user_markers.get("agent", "/agent"),
+                kind=MatchKind.CONTAINS,
+                priority=60,
+            ),
+        ]
+
+    async def shutdown(self) -> None:
+        for task in list(self._pending.values()):
+            task.cancel()
+        self._pending.clear()
+        self._pending_instruction.clear()
+
+    def markers(self) -> list[Marker]:
+        return list(self._markers)
+
+    async def on_draft_update(
+        self, event: DraftUpdate, match: MarkerMatch
+    ) -> None:
+        # Filled in later tasks.
+        return
+
+    async def on_plain_draft_update(self, event: DraftUpdate) -> None:
+        # Filled in later tasks.
+        return
