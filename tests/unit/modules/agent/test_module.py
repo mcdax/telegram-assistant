@@ -109,3 +109,137 @@ async def test_init_send_disabled_when_bot_token_env_field_missing(
         await mod.init(ctx)
     assert mod.send_disabled is True
     await http.close()
+
+
+# ---------- debounce scheduling ----------
+
+async def test_on_draft_update_schedules_run_after_debounce(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    mod = AgentModule()
+    ctx, _, _, http = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    runs: list[tuple[int, str]] = []
+
+    async def fake_run(chat_id: int) -> None:
+        runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
+
+    mod._run = fake_run  # type: ignore[assignment]
+    match = MarkerMatch(
+        module="agent", marker=mod.markers()[0], remainder="hello world",
+    )
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent hello world"), match)
+    await asyncio.sleep(0.2)
+    assert runs == [(5, "hello world")]
+    await http.close()
+
+
+async def test_consecutive_draft_updates_cancel_and_replace(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    mod = AgentModule()
+    ctx, _, _, http = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    runs: list[tuple[int, str]] = []
+
+    async def fake_run(chat_id: int) -> None:
+        runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
+
+    mod._run = fake_run  # type: ignore[assignment]
+    marker = mod.markers()[0]
+    match1 = MarkerMatch(module="agent", marker=marker, remainder="first")
+    match2 = MarkerMatch(module="agent", marker=marker, remainder="second")
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent first"), match1)
+    await asyncio.sleep(0.01)
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent second"), match2)
+    await asyncio.sleep(0.2)
+    assert runs == [(5, "second")]
+    await http.close()
+
+
+async def test_plain_draft_update_cancels_pending(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    mod = AgentModule()
+    ctx, _, _, http = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    runs: list[tuple[int, str]] = []
+
+    async def fake_run(chat_id: int) -> None:
+        runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
+
+    mod._run = fake_run  # type: ignore[assignment]
+    match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
+    await asyncio.sleep(0.01)
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=5, text="other"))
+    await asyncio.sleep(0.2)
+    assert runs == []
+    await http.close()
+
+
+async def test_cancelled_task_does_not_pop_replacement(
+    tmp_path: Path, monkeypatch
+):
+    """Regression: ``_cancel_pending`` is synchronous, so a cancelled task's
+    ``finally`` runs AFTER the replacement is already in ``_pending``.
+    The cancelled task must not clear the slot — otherwise a subsequent
+    update would create a sibling instead of cancel-and-replace, racing
+    the live task."""
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    mod = AgentModule()
+    ctx, _, _, http = await _ctx(tmp_path)
+    # Bump the debounce window so the replacement task is reliably still
+    # sleeping when we inspect ``_pending``.
+    ctx.config["debounce_s"] = 0.5
+    await mod.init(ctx)
+
+    async def fake_run(chat_id: int) -> None:
+        return
+
+    mod._run = fake_run  # type: ignore[assignment]
+    marker = mod.markers()[0]
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/agent first"),
+        MarkerMatch(module="agent", marker=marker, remainder="first"),
+    )
+    first = mod._pending[5]
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/agent second"),
+        MarkerMatch(module="agent", marker=marker, remainder="second"),
+    )
+    second = mod._pending[5]
+    assert first is not second
+    # Let the cancelled ``first`` task drain its finally block.
+    await asyncio.sleep(0.05)
+    # The replacement must still be registered.
+    assert mod._pending.get(5) is second
+    # And cancelling now must successfully cancel the *replacement*.
+    assert mod._cancel_pending(5) is True
+    await asyncio.sleep(0.1)
+    await http.close()
+
+
+async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    mod = AgentModule()
+    ctx, _, _, http = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    runs: list[int] = []
+
+    async def fake_run(chat_id: int) -> None:
+        runs.append(chat_id)
+
+    mod._run = fake_run  # type: ignore[assignment]
+    match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
+    await asyncio.sleep(0.01)
+    await mod.shutdown()
+    await asyncio.sleep(0.2)
+    assert runs == []
+    await http.close()

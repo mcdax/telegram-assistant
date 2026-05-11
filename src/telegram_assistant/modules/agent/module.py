@@ -101,9 +101,42 @@ class AgentModule:
     async def on_draft_update(
         self, event: DraftUpdate, match: MarkerMatch
     ) -> None:
-        # Filled in later tasks.
-        return
+        assert self._ctx is not None
+        chat_id = event.chat_id
+        self._pending_instruction[chat_id] = match.remainder
+        self._cancel_pending(chat_id)
+        self._pending[chat_id] = asyncio.create_task(self._debounced(chat_id))
 
     async def on_plain_draft_update(self, event: DraftUpdate) -> None:
+        chat_id = event.chat_id
+        if self._cancel_pending(chat_id):
+            self._pending_instruction.pop(chat_id, None)
+
+    def _cancel_pending(self, chat_id: int) -> bool:
+        task = self._pending.pop(chat_id, None)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    async def _debounced(self, chat_id: int) -> None:
+        # Capture our own task identity. ``_cancel_pending`` cancels but does
+        # NOT await — by the time this finally runs, ``on_draft_update`` may
+        # already have stored a *replacement* task under the same chat_id.
+        # Only clear the slot if it's still us.
+        current = asyncio.current_task()
+        try:
+            await asyncio.sleep(self._debounce_s)
+        except asyncio.CancelledError:
+            if self._pending.get(chat_id) is current:
+                self._pending.pop(chat_id, None)
+            return
+        try:
+            await self._run(chat_id)
+        finally:
+            if self._pending.get(chat_id) is current:
+                self._pending.pop(chat_id, None)
+
+    async def _run(self, chat_id: int) -> None:
         # Filled in later tasks.
         return
