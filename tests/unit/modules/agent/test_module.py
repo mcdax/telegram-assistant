@@ -310,6 +310,100 @@ async def test_run_empty_instruction_clears_draft_and_skips_llm(
     await http.close()
 
 
+# ---------- error + cancellation paths ----------
+
+async def test_run_llm_exception_posts_error_to_bot(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    sent: list[dict] = []
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"chat_id": chat_id, "text": text})
+
+    class BoomLLM:
+        def agent(self, sp):
+            return object()
+
+        async def run(self, agent, user_text):
+            raise RuntimeError("llm exploded")
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(tmp_path)
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=BoomLLM(), http=ctx.http,           # type: ignore[arg-type]
+        config=ctx.config, state=ctx.state, log=ctx.log,
+    )
+    from tests.fakes.telegram import make_message
+    tg.seed_history(5, [make_message(5, "alice", "hi")])
+    await mod.init(ctx)
+
+    match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
+    await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
+    await asyncio.sleep(0.2)
+    assert len(sent) == 1
+    assert sent[0]["chat_id"] == 999
+    assert sent[0]["text"].startswith("❌ agent:")
+    assert "llm exploded" in sent[0]["text"]
+    await http.close()
+
+
+async def test_run_cancelled_mid_llm_does_not_post_error(
+    tmp_path: Path, monkeypatch
+):
+    """A second /agent update while the LLM is mid-call cancels the first
+    run cleanly — no error posted, only the second run's output reaches
+    the bot."""
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    sent: list[dict] = []
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"chat_id": chat_id, "text": text})
+
+    class BlockingThenFastLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def agent(self, sp):
+            return object()
+
+        async def run(self, agent, user_text):
+            self.calls += 1
+            if self.calls == 1:
+                started.set()
+                await proceed.wait()
+                return "FIRST"
+            return "SECOND"
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(tmp_path)
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=BlockingThenFastLLM(), http=ctx.http,  # type: ignore[arg-type]
+        config=ctx.config, state=ctx.state, log=ctx.log,
+    )
+    from tests.fakes.telegram import make_message
+    tg.seed_history(5, [make_message(5, "alice", "hi")])
+    await mod.init(ctx)
+
+    marker = mod.markers()[0]
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/agent first"),
+        MarkerMatch(module="agent", marker=marker, remainder="first"),
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/agent second"),
+        MarkerMatch(module="agent", marker=marker, remainder="second"),
+    )
+
+    proceed.set()
+    await asyncio.sleep(0.3)
+
+    assert [s["text"] for s in sent] == ["SECOND"]
+    await http.close()
+
+
 async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
     mod = AgentModule()
