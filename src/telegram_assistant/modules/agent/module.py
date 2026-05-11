@@ -28,7 +28,11 @@ import aiohttp
 from telegram_assistant.events import DraftUpdate
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.modules.drafting.openai_drafter import build_payload
+from telegram_assistant.modules.drafting.openai_drafter import (
+    OpenAIDrafter,
+    build_payload,
+    load_openai_config,
+)
 
 from . import bot_sender as _bot_sender
 
@@ -50,6 +54,7 @@ class AgentModule:
         self._default_system_prompt: str = ""
         self._pending: dict[int, asyncio.Task[None]] = {}
         self._pending_instruction: dict[int, str] = {}
+        self._openai_drafter: OpenAIDrafter | None = None
 
     @property
     def send_disabled(self) -> bool:
@@ -80,6 +85,23 @@ class AgentModule:
         self._debounce_s = float(cfg.get("debounce_s", 3))
         self._last_n = int(cfg.get("last_n", 20))
         self._default_system_prompt = cfg.get("default_system_prompt", "") or ""
+
+        openai_section = cfg.get("openai") or {}
+        openai_config = load_openai_config(
+            openai_section,
+            fallback_instruction=self._default_system_prompt,
+        )
+        if openai_config is not None:
+            ctx.log.info(
+                "agent: using OpenAI backend base_url=%s model=%s",
+                openai_config.base_url, openai_config.model,
+            )
+            # ``openai_timeout_s`` is nested under ``[modules.agent.openai]``
+            # to match the shape of ``[modules.drafting.openai]``.
+            self._openai_drafter = OpenAIDrafter.from_config(
+                openai_config,
+                timeout_s=int(openai_section.get("openai_timeout_s", 120)),
+            )
 
         user_markers = cfg.get("markers", {})
         self._markers = [
@@ -198,11 +220,14 @@ class AgentModule:
         history: list,
         instruction: str,
     ) -> str:
-        """Default-LLM path: ``ctx.llm`` with a structured user payload.
-
-        The OpenAI-compatible path (added in a later task) overrides this.
-        """
         assert self._ctx is not None
+        if self._openai_drafter is not None:
+            return await self._openai_drafter.draft(
+                chat_id=chat_id,
+                chat_title="",
+                history=history,
+                instruction=instruction,
+            )
         payload = build_payload(
             chat_id=chat_id,
             chat_title="",

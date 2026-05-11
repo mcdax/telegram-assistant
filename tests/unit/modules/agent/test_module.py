@@ -404,6 +404,69 @@ async def test_run_cancelled_mid_llm_does_not_post_error(
     await http.close()
 
 
+# ---------- openai-compatible backend ----------
+
+async def test_init_uses_openai_drafter_when_block_configured(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    monkeypatch.setenv("AGENT_OAI_KEY", "sk-x")
+
+    captured: dict[str, object] = {}
+
+    class _CapturingDrafter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def draft(self, *, chat_id, chat_title, history, instruction):
+            self.calls += 1
+            captured["chat_id"] = chat_id
+            captured["instruction"] = instruction
+            captured["history_len"] = len(history)
+            return "OPENAI REPLY"
+
+    drafter = _CapturingDrafter()
+    sent: list[dict] = []
+
+    async def fake_send(http, token, *, chat_id: int, text: str) -> None:
+        sent.append({"chat_id": chat_id, "text": text})
+
+    mod = AgentModule(send_text=fake_send)
+    ctx, tg, _, http = await _ctx(
+        tmp_path,
+        config_overrides={
+            "openai": {
+                "base_url": "https://api.example/v1",
+                "model": "test-model",
+                "api_key_env": "AGENT_OAI_KEY",
+                "instruction": "OAI INSTR",
+            },
+        },
+    )
+    await mod.init(ctx)
+    mod._openai_drafter = drafter  # type: ignore[assignment]
+
+    from tests.fakes.telegram import make_message
+    tg.seed_history(5, [
+        make_message(5, "alice", "hi"),
+        make_message(5, "alice", "still here"),
+    ])
+    match = MarkerMatch(
+        module="agent", marker=mod.markers()[0], remainder="do the thing",
+    )
+    await mod.on_draft_update(
+        DraftUpdate(chat_id=5, text="/agent do the thing"), match,
+    )
+    await asyncio.sleep(0.2)
+
+    assert drafter.calls == 1
+    assert captured["chat_id"] == 5
+    assert captured["instruction"] == "do the thing"
+    assert captured["history_len"] == 2
+    assert sent == [{"chat_id": 999, "text": "OPENAI REPLY"}]
+    await http.close()
+
+
 async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
     mod = AgentModule()
