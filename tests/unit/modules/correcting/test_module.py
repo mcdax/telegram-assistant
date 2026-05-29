@@ -6,13 +6,17 @@ from pathlib import Path
 
 import aiohttp
 
-from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
+from telegram_assistant.events import Attachment, DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.modules.correcting.module import CorrectingModule
+from telegram_assistant.modules.correcting.module import (
+    CorrectingModule,
+    _build_user_content,
+    _render_message,
+)
 from telegram_assistant.state import RuntimeState
 from tests.fakes.llm import fake_llm
-from tests.fakes.telegram import FakeTelegramClient
+from tests.fakes.telegram import FakeTelegramClient, make_message
 
 
 async def _ctx(
@@ -330,3 +334,38 @@ async def test_outgoing_fix_marker_empty_remainder_no_edit(tmp_path: Path):
     await mod.on_outgoing_message(_outgoing(9, "/fix", message_id=53))
     assert tg.edits == []
     await ctx.http.close()
+
+
+def test_render_message_incoming_and_outgoing():
+    incoming = make_message(chat_id=1, sender="Alice", text="hallo")
+    outgoing = make_message(chat_id=1, sender="Me", text="hi", outgoing=True)
+    assert _render_message(incoming) == "Alice: hallo"
+    assert _render_message(outgoing) == "Me: hi"
+
+
+def test_render_message_media_uses_attachment_description():
+    msg = make_message(
+        chat_id=1,
+        sender="Alice",
+        text="",
+        message_type="voice",
+        attachment=Attachment(type="voice", description="voice 12s", url=None),
+    )
+    assert _render_message(msg) == "Alice: voice 12s"
+
+
+def test_build_user_content_empty_history_is_verbatim():
+    assert _build_user_content([], "fix me") == "fix me"
+
+
+def test_build_user_content_wraps_with_context_block():
+    history = [
+        make_message(chat_id=1, sender="Alice", text="see you at the Kö"),
+        make_message(chat_id=1, sender="Me", text="ok", outgoing=True),
+    ]
+    out = _build_user_content(history, "ill be their soon")
+    assert "Recent conversation (context only" in out
+    assert "Alice: see you at the Kö" in out
+    assert "Me: ok" in out
+    assert out.rstrip().endswith("ill be their soon")
+    assert "Text to correct" in out

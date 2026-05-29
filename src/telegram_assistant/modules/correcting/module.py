@@ -10,7 +10,7 @@ Owns:
 """
 from __future__ import annotations
 
-from telegram_assistant.events import DraftUpdate, OutgoingMessage
+from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
@@ -26,6 +26,37 @@ DEFAULT_MARKERS = {
 
 _AUTO_FIX_BUCKET = "auto_fix"
 _AUTO_FIX_SENT_BUCKET = "auto_fix_sent"
+
+DEFAULT_CONTEXT_LAST_N = 5
+
+
+def _render_message(m: Message) -> str:
+    """One context line: 'Me: …' for our messages, else 'Sender: …'.
+
+    Media-only messages (no text) render their attachment description.
+    """
+    label = "Me" if m.outgoing else m.sender
+    body = m.text.strip()
+    if not body and m.attachment is not None:
+        body = m.attachment.description
+    return f"{label}: {body}"
+
+
+def _build_user_content(history: list[Message], text: str) -> str:
+    """Wrap the text to correct with a delimited, context-only history block.
+
+    Empty history → the text verbatim (byte-identical to the no-context
+    payload), keeping behaviour unchanged when context is off/unavailable.
+    """
+    if not history:
+        return text
+    lines = "\n".join(_render_message(m) for m in history)
+    return (
+        "Recent conversation (context only — do not correct or reply to these):\n"
+        f"{lines}\n\n"
+        "Text to correct (output only the corrected version of this):\n"
+        f"{text}"
+    )
 
 
 class CorrectingModule:
