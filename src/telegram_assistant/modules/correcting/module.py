@@ -65,9 +65,11 @@ class CorrectingModule:
     def __init__(self) -> None:
         self._ctx: ModuleContext | None = None
         self._markers: list[Marker] = []
+        self._context_last_n: int = DEFAULT_CONTEXT_LAST_N
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
+        self._context_last_n = int(ctx.config.get("context_last_n", DEFAULT_CONTEXT_LAST_N))
         user_markers = ctx.config.get("markers", {})
 
         def trigger(key: str) -> str:
@@ -209,6 +211,25 @@ class CorrectingModule:
         # Even if the LLM returned identical text, we still write so the
         # /fix marker is removed from the draft.
         await self._ctx.tg.write_draft(chat_id, corrected)
+
+    async def _fetch_context(
+        self, chat_id: int, exclude_message_id: int | None
+    ) -> list[Message]:
+        """Last N messages for disambiguation. Empty when disabled or on error."""
+        assert self._ctx is not None
+        if self._context_last_n <= 0:
+            return []
+        try:
+            history = await self._ctx.tg.fetch_history(chat_id, self._context_last_n)
+        except Exception as e:
+            self._ctx.log.debug(
+                "context fetch failed chat=%s: %s — correcting without context",
+                chat_id, e,
+            )
+            return []
+        if exclude_message_id is not None:
+            history = [m for m in history if m.message_id != exclude_message_id]
+        return list(history)
 
     async def _correct(self, text: str) -> str | None:
         assert self._ctx is not None

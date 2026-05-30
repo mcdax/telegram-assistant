@@ -369,3 +369,56 @@ def test_build_user_content_wraps_with_context_block():
     assert "Me: ok" in out
     assert out.rstrip().endswith("ill be their soon")
     assert "Text to correct" in out
+
+
+async def test_context_last_n_defaults_to_5(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, _, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    assert mod._context_last_n == 5
+    await ctx.http.close()
+
+
+async def test_context_last_n_read_from_config(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, _, _ = await _ctx(tmp_path)
+    ctx.config["context_last_n"] = 3
+    await mod.init(ctx)
+    assert mod._context_last_n == 3
+    await ctx.http.close()
+
+
+async def test_fetch_context_disabled_when_zero(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    ctx.config["context_last_n"] = 0
+    await mod.init(ctx)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Alice", text="hi")])
+    assert await mod._fetch_context(1, None) == []
+    await ctx.http.close()
+
+
+async def test_fetch_context_excludes_message_id(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="hi", message_id=10),
+        make_message(chat_id=1, sender="Me", text="hey", message_id=11, outgoing=True),
+    ])
+    result = await mod._fetch_context(1, exclude_message_id=11)
+    assert [m.message_id for m in result] == [10]
+    await ctx.http.close()
+
+
+async def test_fetch_context_returns_empty_on_fetch_error(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    async def boom(chat_id, n):
+        raise RuntimeError("telethon down")
+
+    tg.fetch_history = boom  # type: ignore[method-assign]
+    assert await mod._fetch_context(1, None) == []
+    await ctx.http.close()
