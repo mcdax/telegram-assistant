@@ -10,12 +10,13 @@ from telegram_assistant.events import Attachment, DraftUpdate, Message, Outgoing
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.correcting.module import (
+    _AUTO_FIX_SENT_BUCKET,
     CorrectingModule,
     _build_user_content,
     _render_message,
 )
 from telegram_assistant.state import RuntimeState
-from tests.fakes.llm import fake_llm
+from tests.fakes.llm import RecordingLLM, fake_llm
 from tests.fakes.telegram import FakeTelegramClient, make_message
 
 
@@ -421,4 +422,58 @@ async def test_fetch_context_returns_empty_on_fetch_error(tmp_path: Path):
 
     tg.fetch_history = boom  # type: ignore[method-assign]
     assert await mod._fetch_context(1, None) == []
+    await ctx.http.close()
+
+
+async def _ctx_recording(tmp_path: Path):
+    ctx, tg, state = await _ctx(tmp_path)
+    rec = RecordingLLM("CORRECTED")
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=rec, http=ctx.http, config=ctx.config,
+        state=ctx.state, log=ctx.log,
+    )
+    return ctx, tg, rec
+
+
+async def test_fix_draft_includes_context(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Alice", text="meet at the Kö")])
+    await mod._fix_remainder(1, "ill be their")
+    assert rec.calls, "LLM was not called"
+    assert "Alice: meet at the Kö" in rec.calls[0]
+    assert rec.calls[0].rstrip().endswith("ill be their")
+    assert tg.drafts[1] == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_fix_without_history_sends_text_only(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    await mod._fix_remainder(1, "fix me")
+    assert rec.calls == ["fix me"]
+    await ctx.http.close()
+
+
+async def test_auto_fix_sent_excludes_own_message(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    ctx.config["context_last_n"] = 5
+    await mod.init(ctx)
+    # auto_fix_sent on for chat 1
+    ctx.state.set(_AUTO_FIX_SENT_BUCKET, "1", True)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="how are you", message_id=20),
+        make_message(chat_id=1, sender="Me", text="i'm god", message_id=21, outgoing=True),
+    ])
+    sent = make_message(chat_id=1, sender="Me", text="i'm god", message_id=21, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    assert "Alice: how are you" in payload
+    # the message being corrected must not appear in the context block
+    assert payload.count("Me: i'm god") == 0
+    assert payload.rstrip().endswith("i'm god")
     await ctx.http.close()

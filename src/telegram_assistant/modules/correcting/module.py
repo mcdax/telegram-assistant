@@ -127,7 +127,7 @@ class CorrectingModule:
         if not text:
             return
         self._ctx.log.debug("auto_fix rewriting draft chat=%s input_len=%d", event.chat_id, len(text))
-        corrected = await self._correct(text)
+        corrected = await self._correct(event.chat_id, text)
         if corrected is None:
             return
         if corrected.strip() == text:
@@ -160,7 +160,7 @@ class CorrectingModule:
             "auto_fix_sent rewriting chat=%s id=%s input_len=%d",
             msg.chat_id, msg.message_id, len(text),
         )
-        corrected = await self._correct(text)
+        corrected = await self._correct(msg.chat_id, text, exclude_message_id=msg.message_id)
         if corrected is None:
             return
         if corrected.strip() == text:
@@ -186,7 +186,7 @@ class CorrectingModule:
             "/fix in sent message chat=%s id=%s remainder_len=%d",
             chat_id, message_id, len(text),
         )
-        corrected = await self._correct(text)
+        corrected = await self._correct(chat_id, text, exclude_message_id=message_id)
         if corrected is None:
             return
         # Even if the LLM returned identical text, we still edit so the
@@ -205,7 +205,7 @@ class CorrectingModule:
         if not text:
             self._ctx.log.info("/fix with empty remainder — ignored")
             return
-        corrected = await self._correct(text)
+        corrected = await self._correct(chat_id, text)
         if corrected is None:
             return
         # Even if the LLM returned identical text, we still write so the
@@ -231,11 +231,15 @@ class CorrectingModule:
             history = [m for m in history if m.message_id != exclude_message_id]
         return list(history)
 
-    async def _correct(self, text: str) -> str | None:
+    async def _correct(
+        self, chat_id: int, text: str, *, exclude_message_id: int | None = None
+    ) -> str | None:
         assert self._ctx is not None
+        history = await self._fetch_context(chat_id, exclude_message_id)
+        user_content = _build_user_content(history, text)
         agent = self._ctx.llm.agent(self._ctx.config["system_prompt"])
         try:
-            return await self._ctx.llm.run(agent, text)
+            return await self._ctx.llm.run(agent, user_content)
         except Exception as e:
             self._ctx.log.warning("correcting failed: %s", e)
             return None
