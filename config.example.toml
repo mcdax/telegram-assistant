@@ -129,6 +129,12 @@ auto_draft_off = "/auto_draft off"
 enabled = true
 system_prompt = "Rewrite the given text correcting grammar, spelling, and punctuation. Preserve meaning, tone, and language. Output only the rewritten text."
 
+# Number of preceding chat messages sent as context to help disambiguate
+# names, terms, and language during correction. Context never changes the
+# meaning of your text — corrections stay grammar/spelling/punctuation only.
+# 0 disables context entirely.
+context_last_n = 5
+
 [modules.correcting.markers]
 fix               = "/fix"
 auto_fix_on       = "/auto_fix on"

@@ -10,7 +10,7 @@ Owns:
 """
 from __future__ import annotations
 
-from telegram_assistant.events import DraftUpdate, OutgoingMessage
+from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
@@ -27,6 +27,37 @@ DEFAULT_MARKERS = {
 _AUTO_FIX_BUCKET = "auto_fix"
 _AUTO_FIX_SENT_BUCKET = "auto_fix_sent"
 
+DEFAULT_CONTEXT_LAST_N = 5
+
+
+def _render_message(m: Message) -> str:
+    """One context line: 'Me: …' for our messages, else 'Sender: …'.
+
+    Media-only messages (no text) render their attachment description.
+    """
+    label = "Me" if m.outgoing else m.sender
+    body = m.text.strip()
+    if not body and m.attachment is not None:
+        body = m.attachment.description
+    return f"{label}: {body}"
+
+
+def _build_user_content(history: list[Message], text: str) -> str:
+    """Wrap the text to correct with a delimited, context-only history block.
+
+    Empty history → the text verbatim (byte-identical to the no-context
+    payload), keeping behaviour unchanged when context is off/unavailable.
+    """
+    if not history:
+        return text
+    lines = "\n".join(_render_message(m) for m in history)
+    return (
+        "Recent conversation (context only — do not correct or reply to these):\n"
+        f"{lines}\n\n"
+        "Text to correct (output only the corrected version of this):\n"
+        f"{text}"
+    )
+
 
 class CorrectingModule:
     name = "correcting"
@@ -34,9 +65,11 @@ class CorrectingModule:
     def __init__(self) -> None:
         self._ctx: ModuleContext | None = None
         self._markers: list[Marker] = []
+        self._context_last_n: int = DEFAULT_CONTEXT_LAST_N
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
+        self._context_last_n = int(ctx.config.get("context_last_n", DEFAULT_CONTEXT_LAST_N))
         user_markers = ctx.config.get("markers", {})
 
         def trigger(key: str) -> str:
@@ -94,7 +127,7 @@ class CorrectingModule:
         if not text:
             return
         self._ctx.log.debug("auto_fix rewriting draft chat=%s input_len=%d", event.chat_id, len(text))
-        corrected = await self._correct(text)
+        corrected = await self._correct(event.chat_id, text)
         if corrected is None:
             return
         if corrected.strip() == text:
@@ -127,7 +160,7 @@ class CorrectingModule:
             "auto_fix_sent rewriting chat=%s id=%s input_len=%d",
             msg.chat_id, msg.message_id, len(text),
         )
-        corrected = await self._correct(text)
+        corrected = await self._correct(msg.chat_id, text, exclude_message_id=msg.message_id)
         if corrected is None:
             return
         if corrected.strip() == text:
@@ -153,7 +186,7 @@ class CorrectingModule:
             "/fix in sent message chat=%s id=%s remainder_len=%d",
             chat_id, message_id, len(text),
         )
-        corrected = await self._correct(text)
+        corrected = await self._correct(chat_id, text, exclude_message_id=message_id)
         if corrected is None:
             return
         # Even if the LLM returned identical text, we still edit so the
@@ -172,18 +205,41 @@ class CorrectingModule:
         if not text:
             self._ctx.log.info("/fix with empty remainder — ignored")
             return
-        corrected = await self._correct(text)
+        corrected = await self._correct(chat_id, text)
         if corrected is None:
             return
         # Even if the LLM returned identical text, we still write so the
         # /fix marker is removed from the draft.
         await self._ctx.tg.write_draft(chat_id, corrected)
 
-    async def _correct(self, text: str) -> str | None:
+    async def _fetch_context(
+        self, chat_id: int, exclude_message_id: int | None
+    ) -> list[Message]:
+        """Last N messages for disambiguation. Empty when disabled or on error."""
         assert self._ctx is not None
+        if self._context_last_n <= 0:
+            return []
+        try:
+            history = await self._ctx.tg.fetch_history(chat_id, self._context_last_n)
+        except Exception as e:
+            self._ctx.log.debug(
+                "context fetch failed chat=%s: %s — correcting without context",
+                chat_id, e,
+            )
+            return []
+        if exclude_message_id is not None:
+            history = [m for m in history if m.message_id != exclude_message_id]
+        return list(history)
+
+    async def _correct(
+        self, chat_id: int, text: str, *, exclude_message_id: int | None = None
+    ) -> str | None:
+        assert self._ctx is not None
+        history = await self._fetch_context(chat_id, exclude_message_id)
+        user_content = _build_user_content(history, text)
         agent = self._ctx.llm.agent(self._ctx.config["system_prompt"])
         try:
-            return await self._ctx.llm.run(agent, text)
+            return await self._ctx.llm.run(agent, user_content)
         except Exception as e:
             self._ctx.log.warning("correcting failed: %s", e)
             return None

@@ -6,13 +6,19 @@ from pathlib import Path
 
 import aiohttp
 
-from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
+from telegram_assistant.events import Attachment, DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.modules.correcting.module import CorrectingModule
+from telegram_assistant.modules.correcting.module import (
+    _AUTO_FIX_BUCKET,
+    _AUTO_FIX_SENT_BUCKET,
+    CorrectingModule,
+    _build_user_content,
+    _render_message,
+)
 from telegram_assistant.state import RuntimeState
-from tests.fakes.llm import fake_llm
-from tests.fakes.telegram import FakeTelegramClient
+from tests.fakes.llm import RecordingLLM, fake_llm
+from tests.fakes.telegram import FakeTelegramClient, make_message
 
 
 async def _ctx(
@@ -329,4 +335,196 @@ async def test_outgoing_fix_marker_empty_remainder_no_edit(tmp_path: Path):
     # "/fix" alone — remainder empty, nothing to correct.
     await mod.on_outgoing_message(_outgoing(9, "/fix", message_id=53))
     assert tg.edits == []
+    await ctx.http.close()
+
+
+def test_render_message_incoming_and_outgoing():
+    incoming = make_message(chat_id=1, sender="Alice", text="hallo")
+    outgoing = make_message(chat_id=1, sender="Me", text="hi", outgoing=True)
+    assert _render_message(incoming) == "Alice: hallo"
+    assert _render_message(outgoing) == "Me: hi"
+
+
+def test_render_message_media_uses_attachment_description():
+    msg = make_message(
+        chat_id=1,
+        sender="Alice",
+        text="",
+        message_type="voice",
+        attachment=Attachment(type="voice", description="voice 12s", url=None),
+    )
+    assert _render_message(msg) == "Alice: voice 12s"
+
+
+def test_build_user_content_empty_history_is_verbatim():
+    assert _build_user_content([], "fix me") == "fix me"
+
+
+def test_build_user_content_wraps_with_context_block():
+    history = [
+        make_message(chat_id=1, sender="Alice", text="see you at the Kö"),
+        make_message(chat_id=1, sender="Me", text="ok", outgoing=True),
+    ]
+    out = _build_user_content(history, "ill be their soon")
+    assert "Recent conversation (context only" in out
+    assert "Alice: see you at the Kö" in out
+    assert "Me: ok" in out
+    assert out.rstrip().endswith("ill be their soon")
+    assert "Text to correct" in out
+
+
+async def test_context_last_n_defaults_to_5(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, _, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    assert mod._context_last_n == 5
+    await ctx.http.close()
+
+
+async def test_context_last_n_read_from_config(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, _, _ = await _ctx(tmp_path)
+    ctx.config["context_last_n"] = 3
+    await mod.init(ctx)
+    assert mod._context_last_n == 3
+    await ctx.http.close()
+
+
+async def test_fetch_context_disabled_when_zero(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    ctx.config["context_last_n"] = 0
+    await mod.init(ctx)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Alice", text="hi")])
+    assert await mod._fetch_context(1, None) == []
+    await ctx.http.close()
+
+
+async def test_fetch_context_excludes_message_id(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="hi", message_id=10),
+        make_message(chat_id=1, sender="Me", text="hey", message_id=11, outgoing=True),
+    ])
+    result = await mod._fetch_context(1, exclude_message_id=11)
+    assert [m.message_id for m in result] == [10]
+    await ctx.http.close()
+
+
+async def test_fetch_context_returns_empty_on_fetch_error(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, _ = await _ctx(tmp_path)
+    await mod.init(ctx)
+
+    async def boom(chat_id, n):
+        raise RuntimeError("telethon down")
+
+    tg.fetch_history = boom  # type: ignore[method-assign]
+    assert await mod._fetch_context(1, None) == []
+    await ctx.http.close()
+
+
+async def _ctx_recording(tmp_path: Path):
+    ctx, tg, state = await _ctx(tmp_path)
+    rec = RecordingLLM("CORRECTED")
+    ctx = ModuleContext(
+        tg=ctx.tg, llm=rec, http=ctx.http, config=ctx.config,
+        state=ctx.state, log=ctx.log,
+    )
+    return ctx, tg, rec
+
+
+async def test_fix_draft_includes_context(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Alice", text="meet at the Kö")])
+    await mod._fix_remainder(1, "ill be their")
+    assert rec.calls, "LLM was not called"
+    assert "Alice: meet at the Kö" in rec.calls[0]
+    assert rec.calls[0].rstrip().endswith("ill be their")
+    assert tg.drafts[1] == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_fix_without_history_sends_text_only(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    await mod._fix_remainder(1, "fix me")
+    assert rec.calls == ["fix me"]
+    await ctx.http.close()
+
+
+async def test_auto_fix_sent_excludes_own_message(tmp_path: Path):
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    ctx.config["context_last_n"] = 5
+    await mod.init(ctx)
+    # auto_fix_sent on for chat 1
+    ctx.state.set(_AUTO_FIX_SENT_BUCKET, "1", True)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="how are you", message_id=20),
+        make_message(chat_id=1, sender="Me", text="i'm god", message_id=21, outgoing=True),
+    ])
+    sent = make_message(chat_id=1, sender="Me", text="i'm god", message_id=21, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    assert "Alice: how are you" in payload
+    # the message being corrected must not appear in the context block
+    assert payload.count("Me: i'm god") == 0
+    assert payload.rstrip().endswith("i'm god")
+    await ctx.http.close()
+
+
+async def test_auto_fix_pre_send_includes_context(tmp_path: Path):
+    """on_plain_draft_update: history is sent as context; no message excluded."""
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    # Enable pre-send autofix after init (matches ordering of the sent test above).
+    ctx.state.set(_AUTO_FIX_BUCKET, "1", True)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Bob", text="the Kö is busy")])
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="see you their"))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    assert "Bob: the Kö is busy" in payload
+    assert payload.rstrip().endswith("see you their")
+    assert tg.drafts[1] == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_fix_in_sent_includes_context_excludes_own_message(tmp_path: Path):
+    """/fix in a sent message: history is sent as context; the marker-bearing
+    message itself is excluded from the context block."""
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="where are you", message_id=30),
+        make_message(
+            chat_id=1, sender="Me", text="omw see you their /fix",
+            message_id=31, outgoing=True,
+        ),
+    ])
+    sent = make_message(
+        chat_id=1, sender="Me", text="omw see you their /fix",
+        message_id=31, outgoing=True,
+    )
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    # Context should contain the other participant's message.
+    assert "Alice: where are you" in payload
+    # The /fix marker and the own message are excluded from context; the
+    # stripped remainder is the correction target so /fix should not appear.
+    assert "/fix" not in payload
+    # The remainder "omw see you their" is the target text at the end.
+    assert payload.rstrip().endswith("omw see you their")
+    # An edit to the sent message should have been recorded.
+    assert tg.edits, "no edit was recorded"
+    assert tg.edits[-1].text == "CORRECTED"
     await ctx.http.close()
