@@ -10,6 +10,7 @@ from telegram_assistant.events import Attachment, DraftUpdate, Message, Outgoing
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.correcting.module import (
+    _AUTO_FIX_BUCKET,
     _AUTO_FIX_SENT_BUCKET,
     CorrectingModule,
     _build_user_content,
@@ -476,4 +477,54 @@ async def test_auto_fix_sent_excludes_own_message(tmp_path: Path):
     # the message being corrected must not appear in the context block
     assert payload.count("Me: i'm god") == 0
     assert payload.rstrip().endswith("i'm god")
+    await ctx.http.close()
+
+
+async def test_auto_fix_pre_send_includes_context(tmp_path: Path):
+    """on_plain_draft_update: history is sent as context; no message excluded."""
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    # Enable pre-send autofix after init (matches ordering of the sent test above).
+    ctx.state.set(_AUTO_FIX_BUCKET, "1", True)
+    tg.seed_history(1, [make_message(chat_id=1, sender="Bob", text="the Kö is busy")])
+    await mod.on_plain_draft_update(DraftUpdate(chat_id=1, text="see you their"))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    assert "Bob: the Kö is busy" in payload
+    assert payload.rstrip().endswith("see you their")
+    assert tg.drafts[1] == "CORRECTED"
+    await ctx.http.close()
+
+
+async def test_fix_in_sent_includes_context_excludes_own_message(tmp_path: Path):
+    """/fix in a sent message: history is sent as context; the marker-bearing
+    message itself is excluded from the context block."""
+    mod = CorrectingModule()
+    ctx, tg, rec = await _ctx_recording(tmp_path)
+    await mod.init(ctx)
+    tg.seed_history(1, [
+        make_message(chat_id=1, sender="Alice", text="where are you", message_id=30),
+        make_message(
+            chat_id=1, sender="Me", text="omw see you their /fix",
+            message_id=31, outgoing=True,
+        ),
+    ])
+    sent = make_message(
+        chat_id=1, sender="Me", text="omw see you their /fix",
+        message_id=31, outgoing=True,
+    )
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+    assert rec.calls, "LLM was not called"
+    payload = rec.calls[0]
+    # Context should contain the other participant's message.
+    assert "Alice: where are you" in payload
+    # The /fix marker and the own message are excluded from context; the
+    # stripped remainder is the correction target so /fix should not appear.
+    assert "/fix" not in payload
+    # The remainder "omw see you their" is the target text at the end.
+    assert payload.rstrip().endswith("omw see you their")
+    # An edit to the sent message should have been recorded.
+    assert tg.edits, "no edit was recorded"
+    assert tg.edits[-1].text == "CORRECTED"
     await ctx.http.close()
