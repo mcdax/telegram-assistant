@@ -305,11 +305,11 @@ class DraftingModule:
             "draft chat=%s last_n=%d instruction=%r system_prompt_len=%d message_id=%s",
             chat_id, last_n, instruction[:80], len(system_prompt), message_id,
         )
-        history = await self._ctx.tg.fetch_history(chat_id, last_n)
-        if message_id is not None:
-            history = [m for m in history if m.message_id != message_id]
-        self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
         try:
+            history = await self._ctx.tg.fetch_history(chat_id, last_n)
+            if message_id is not None:
+                history = [m for m in history if m.message_id != message_id]
+            self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
             if self._openai_drafter is not None:
                 output = await self._openai_drafter.draft(
                     chat_id=chat_id,

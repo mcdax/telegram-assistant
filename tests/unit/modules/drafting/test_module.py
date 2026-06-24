@@ -552,3 +552,24 @@ async def test_normal_outgoing_does_not_edit(tmp_path: Path):
     assert tg.edits == []
     assert 1 not in mod._pending  # type: ignore[attr-defined]
     await ctx.http.close()
+
+
+async def test_post_send_draft_swallows_history_fetch_error(tmp_path: Path):
+    # A fetch_history failure on the post-send path must be logged and
+    # swallowed (the sent message stays unedited), not escape the broadcast
+    # handler — matching how correcting._fetch_context guards its fetch.
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, _module_config())
+
+    async def _boom(chat_id: int, n: int):
+        raise RuntimeError("history backend down")
+
+    tg.fetch_history = _boom  # type: ignore[assignment]
+    await mod.init(ctx)
+
+    sent = make_message(1, "me", "/draft please", message_id=20, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))  # must not raise
+
+    assert tg.edits == []
+    assert tg.drafts == {}
+    await ctx.http.close()
