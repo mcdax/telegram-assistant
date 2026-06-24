@@ -128,9 +128,30 @@ class DraftingModule:
         await self._trigger_auto_draft(msg.chat_id, chat_title=msg.sender, trigger="edit")
 
     async def on_outgoing_message(self, event: OutgoingMessage) -> None:
-        """Our pending debounce is moot once the user sends: start fresh next time."""
+        """Post-send /draft, then auto-draft bookkeeping.
+
+        If the sent text contains the /draft marker, replace the sent message
+        in place with a generated reply (mirrors /fix-in-sent) and return.
+        Otherwise our pending debounce is moot once the user sends: cancel it
+        and clear cooldown so the next inbound activity drafts fresh.
+        """
         assert self._ctx is not None
-        chat_id = event.message.chat_id
+        msg = event.message
+        draft_marker = self._draft_marker()
+        matched, remainder = draft_marker.match(msg.text) if draft_marker else (False, None)
+        if matched:
+            self._ctx.log.debug(
+                "post-send /draft chat=%s id=%s remainder=%r",
+                msg.chat_id, msg.message_id, (remainder or "")[:80],
+            )
+            await self._draft(
+                chat_id=msg.chat_id,
+                chat_title="",
+                instruction=remainder or "",
+                message_id=msg.message_id,
+            )
+            return
+        chat_id = msg.chat_id
         if self._cancel_pending(chat_id):
             self._ctx.log.debug("outgoing in chat=%s cancelled pending debounce", chat_id)
         if chat_id in self._last_drafted_at:
@@ -174,6 +195,12 @@ class DraftingModule:
             await self._set_auto(event.chat_id, False)
         elif name == "draft":
             await self._draft(chat_id=event.chat_id, chat_title="", instruction=match.remainder)
+
+    def _draft_marker(self) -> Marker | None:
+        for m in self._markers:
+            if m.name == "draft":
+                return m
+        return None
 
     async def _trigger_auto_draft(
         self, chat_id: int, *, chat_title: str, trigger: str
@@ -258,14 +285,23 @@ class DraftingModule:
         last_n = int(per.get("last_n", self._ctx.config["last_n"]))
         return system_prompt, last_n
 
-    async def _draft(self, *, chat_id: int, chat_title: str, instruction: str) -> None:
+    async def _draft(
+        self,
+        *,
+        chat_id: int,
+        chat_title: str,
+        instruction: str,
+        message_id: int | None = None,
+    ) -> None:
         assert self._ctx is not None
         system_prompt, last_n = self._resolve_for_chat(chat_id)
         self._ctx.log.debug(
-            "draft chat=%s last_n=%d instruction=%r system_prompt_len=%d",
-            chat_id, last_n, instruction[:80], len(system_prompt),
+            "draft chat=%s last_n=%d instruction=%r system_prompt_len=%d message_id=%s",
+            chat_id, last_n, instruction[:80], len(system_prompt), message_id,
         )
         history = await self._ctx.tg.fetch_history(chat_id, last_n)
+        if message_id is not None:
+            history = [m for m in history if m.message_id != message_id]
         self._ctx.log.debug("fetched history chat=%s messages=%d", chat_id, len(history))
         try:
             if self._openai_drafter is not None:
@@ -284,4 +320,7 @@ class DraftingModule:
             self._ctx.log.warning("drafting failed chat=%s: %s", chat_id, e)
             return
         self._ctx.log.debug("draft generated chat=%s len=%d", chat_id, len(output))
-        await self._ctx.tg.write_draft(chat_id, output)
+        if message_id is not None:
+            await self._ctx.tg.edit_message(chat_id, message_id, output)
+        else:
+            await self._ctx.tg.write_draft(chat_id, output)

@@ -14,8 +14,8 @@ from telegram_assistant.markers import MarkerMatch
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.drafting.module import DraftingModule
 from telegram_assistant.state import RuntimeState, StateWriteError
-from tests.fakes.llm import fake_llm
-from tests.fakes.telegram import FakeTelegramClient, make_message
+from tests.fakes.llm import RecordingLLM, fake_llm
+from tests.fakes.telegram import EditedMessage, FakeTelegramClient, make_message
 
 
 def _module_config(**overrides: Any) -> dict[str, Any]:
@@ -471,4 +471,84 @@ async def test_shutdown_cancels_pending_tasks(tmp_path: Path):
     except asyncio.CancelledError:
         pass
     assert task.cancelled() or task.done()
+    await ctx.http.close()
+
+
+# ---------- post-send /draft (edit sent message in place) ----------
+
+
+async def test_post_send_draft_edits_sent_message(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, _module_config())
+    tg.seed_history(1, [make_message(1, "alice", "hi", message_id=10)])
+    await mod.init(ctx)
+
+    sent = make_message(
+        1, "me", "/draft ask about the meeting", message_id=20, outgoing=True
+    )
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+
+    assert tg.edits == [EditedMessage(chat_id=1, message_id=20, text="GENERATED")]
+    assert tg.drafts == {}
+    await ctx.http.close()
+
+
+async def test_post_send_draft_excludes_own_message_from_history(tmp_path: Path):
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, _module_config())
+    # Swap in a recording LLM so we can inspect the prompt the pipeline built.
+    ctx.llm = RecordingLLM("GENERATED")
+    tg.seed_history(
+        1,
+        [
+            make_message(1, "alice", "INCOMING_CONTEXT", message_id=10),
+            make_message(1, "me", "/draft reply now", message_id=20, outgoing=True),
+        ],
+    )
+    await mod.init(ctx)
+
+    sent = make_message(1, "me", "/draft reply now", message_id=20, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+
+    assert len(ctx.llm.calls) == 1  # type: ignore[attr-defined]
+    prompt = ctx.llm.calls[0]  # type: ignore[attr-defined]
+    assert "INCOMING_CONTEXT" in prompt          # context kept
+    assert "/draft reply now" not in prompt      # own sent message excluded
+    await ctx.http.close()
+
+
+async def test_post_send_draft_empty_instruction_still_drafts(tmp_path: Path):
+    # Unlike /fix, a bare /draft (empty instruction) is valid: draft from
+    # history alone and still edit (which strips the marker).
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(tmp_path, _module_config())
+    tg.seed_history(1, [make_message(1, "alice", "hi", message_id=10)])
+    await mod.init(ctx)
+
+    sent = make_message(1, "me", "/draft", message_id=20, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+
+    assert tg.edits == [EditedMessage(chat_id=1, message_id=20, text="GENERATED")]
+    await ctx.http.close()
+
+
+async def test_normal_outgoing_does_not_edit(tmp_path: Path):
+    # A sent message without the marker leaves cooldown cleanup intact and
+    # never calls the edit API.
+    mod = DraftingModule()
+    ctx, tg, _ = await _ctx(
+        tmp_path, _module_config(auto_draft_chats=[1], auto_draft_debounce_s=60)
+    )
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
+    await mod.init(ctx)
+
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi2")))
+    assert 1 in mod._pending  # type: ignore[attr-defined]
+
+    sent = make_message(1, "me", "ok thanks", message_id=20, outgoing=True)
+    await mod.on_outgoing_message(OutgoingMessage(sent))
+
+    assert tg.edits == []
+    assert 1 not in mod._pending  # type: ignore[attr-defined]
     await ctx.http.close()
