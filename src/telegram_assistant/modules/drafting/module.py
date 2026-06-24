@@ -1,5 +1,11 @@
 """Drafting module. Owns /draft, /auto_draft on, /auto_draft off markers and auto-draft policy.
 
+/draft seen in a draft overwrites the draft input with a generated reply.
+/draft seen in an already-sent message (the user pressed Send with the marker)
+edits that message in place with the generated reply (mirrors /fix-in-sent);
+the just-sent message is excluded from the history context. Unlike /fix, an
+empty instruction is valid and drafts from history alone.
+
 Auto-draft debouncing:
   * First inbound activity in an idle chat drafts immediately.
   * While "in cooldown" (< ``auto_draft_debounce_s`` seconds since the last
