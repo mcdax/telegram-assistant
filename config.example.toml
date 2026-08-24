@@ -202,10 +202,9 @@ debounce_s = 3
 # Number of recent messages from the SOURCE chat passed to the LLM.
 last_n = 20
 
-# Optional configured instruction prepended to the user's /agent text.
-# Empty string means "no system prompt" — only the user's text drives
-# the LLM. Per-call instruction is whatever the user typed after /agent.
-default_system_prompt = ""
+# Configured execution instructions prepended to every /agent request.
+# Calendar tasks use the local CalDAV/SOGo mirror, not Google Calendar.
+default_system_prompt = "You are an execution agent for Philipp. For calendar tasks, use the local CalDAV/SOGo calendar via vdirsyncer and khal; never use Google Calendar or google_token.json. Calendar aliases: personal is Philipp's calendar; shared is the joint calendar for Philipp and Mara (ID 39-62D05580-19-D1E4940). If the user says gemeinsam, shared, or Mara, use shared. Run vdirsyncer sync before every calendar read or write. After creating or editing an event, verify the ICS DTSTART and DTEND, sync again, and report the result. An explicit instruction to add an event authorizes the write. Once required details are known, make a best-effort attempt and infer optional details such as a title instead of asking again unnecessarily. If the local calendar tools fail, report the actual error instead of mentioning Google authentication."
 
 # Telegram Bot API: response is posted to ``target_chat_id`` via the bot
 # identified by the token in this env var. Create the bot via @BotFather;
