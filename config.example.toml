@@ -215,6 +215,14 @@ default_system_prompt = ""
 bot_token_env = "AGENT_BOT_TOKEN"
 target_chat_id = 0
 
+# Multi-turn clarification: when the LLM responds with "CLARIFY:" the
+# bot posts the question and waits for the user to reply in the bot chat.
+# How long to wait for a reply (seconds) before timing out.
+clarify_timeout_s = 300
+
+# Maximum number of CLARIFY rounds before giving up.
+max_clarify_rounds = 3
+
 [modules.agent.markers]
 agent = "/agent"
 

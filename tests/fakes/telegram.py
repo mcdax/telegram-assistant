@@ -72,6 +72,7 @@ def make_message(
     sender_id: int | None = None,
     message_type: str = "text",
     attachment: Attachment | None = None,
+    reply_to_message_id: int | None = None,
 ) -> Message:
     return Message(
         chat_id=chat_id,
@@ -83,4 +84,5 @@ def make_message(
         sender_id=sender_id,
         message_type=message_type,
         attachment=attachment,
+        reply_to_message_id=reply_to_message_id,
     )

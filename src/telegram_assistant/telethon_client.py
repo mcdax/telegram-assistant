@@ -142,6 +142,7 @@ class TelethonTelegramClient:
                     outgoing=bool(m.out),
                     message_type=message_type,
                     attachment=attachment,
+                    reply_to_message_id=getattr(m.reply_to, "reply_to_msg_id", None),
                 )
             )
         out.reverse()
@@ -166,6 +167,7 @@ class TelethonTelegramClient:
             outgoing=bool(event.message.out),
             message_type=message_type,
             attachment=attachment,
+            reply_to_message_id=getattr(event.message.reply_to, "reply_to_msg_id", None),
         )
 
     @staticmethod

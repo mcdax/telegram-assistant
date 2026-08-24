@@ -12,7 +12,7 @@ async def test_send_text_posts_to_bot_api():
     with aioresponses() as m:
         m.post(
             "https://api.telegram.org/bot123:abc/sendMessage",
-            payload={"ok": True, "result": {}},
+            payload={"ok": True, "result": {"message_id": 42}},
         )
         async with aiohttp.ClientSession() as http:
             await send_text(http, "123:abc", chat_id=42, text="hi")

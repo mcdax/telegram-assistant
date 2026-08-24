@@ -126,7 +126,7 @@ async def test_on_draft_update_schedules_run_after_debounce(
     async def fake_run(chat_id: int) -> None:
         runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
 
-    mod._run = fake_run  # type: ignore[assignment]
+    mod._run_session = fake_run  # type: ignore[assignment]
     match = MarkerMatch(
         module="agent", marker=mod.markers()[0], remainder="hello world",
     )
@@ -149,7 +149,7 @@ async def test_consecutive_draft_updates_cancel_and_replace(
     async def fake_run(chat_id: int) -> None:
         runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
 
-    mod._run = fake_run  # type: ignore[assignment]
+    mod._run_session = fake_run  # type: ignore[assignment]
     marker = mod.markers()[0]
     match1 = MarkerMatch(module="agent", marker=marker, remainder="first")
     match2 = MarkerMatch(module="agent", marker=marker, remainder="second")
@@ -172,7 +172,7 @@ async def test_plain_draft_update_cancels_pending(tmp_path: Path, monkeypatch):
     async def fake_run(chat_id: int) -> None:
         runs.append((chat_id, mod._pending_instruction.get(chat_id, "")))
 
-    mod._run = fake_run  # type: ignore[assignment]
+    mod._run_session = fake_run  # type: ignore[assignment]
     match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
     await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
     await asyncio.sleep(0.01)
@@ -201,7 +201,7 @@ async def test_cancelled_task_does_not_pop_replacement(
     async def fake_run(chat_id: int) -> None:
         return
 
-    mod._run = fake_run  # type: ignore[assignment]
+    mod._run_session = fake_run  # type: ignore[assignment]
     marker = mod.markers()[0]
     await mod.on_draft_update(
         DraftUpdate(chat_id=5, text="/agent first"),
@@ -461,7 +461,9 @@ async def test_init_uses_openai_drafter_when_block_configured(
 
     assert drafter.calls == 1
     assert captured["chat_id"] == 5
-    assert captured["instruction"] == "do the thing"
+    # The instruction now includes the CLARIFY/ANSWER protocol suffix
+    assert captured["instruction"].startswith("do the thing")
+    assert "CLARIFY:" in captured["instruction"]
     assert captured["history_len"] == 2
     assert sent == [{"chat_id": 999, "text": "OPENAI REPLY"}]
     await http.close()
@@ -478,7 +480,7 @@ async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     async def fake_run(chat_id: int) -> None:
         runs.append(chat_id)
 
-    mod._run = fake_run  # type: ignore[assignment]
+    mod._run_session = fake_run  # type: ignore[assignment]
     match = MarkerMatch(module="agent", marker=mod.markers()[0], remainder="x")
     await mod.on_draft_update(DraftUpdate(chat_id=5, text="/agent x"), match)
     await asyncio.sleep(0.01)
