@@ -53,7 +53,12 @@ _ANSWER_PREFIX = "ANSWER:"
 _CLARIFY_SYSTEM_SUFFIX = (
     "\n\nIf the instruction is ambiguous or missing details, start your "
     'response with "CLARIFY:" followed by a concise question. '
-    'Otherwise start with "ANSWER:" followed by the result.'
+    'Otherwise start with "ANSWER:" followed by the result. '
+    "After the user answers a clarification, make a best-effort attempt "
+    "using the information provided. Infer sensible defaults for optional "
+    "details (for example, a calendar title or default duration) instead "
+    "of asking again. Ask another CLARIFY question only when a missing "
+    "detail is strictly required to perform the action."
 )
 
 
@@ -79,6 +84,7 @@ class AgentModule:
         self._send_text: SendText = send_text or _bot_sender.send_text
         self._bot_token: str | None = None
         self._target_chat_id: int = 0
+        self._bot_chat_id: int | None = None
         self._debounce_s: float = 3.0
         self._last_n: int = 20
         self._default_system_prompt: str = ""
@@ -115,6 +121,22 @@ class AgentModule:
                 bot_token_env,
             )
         self._bot_token = token
+        # In a private Telegram conversation the bot's user ID is the
+        # ``chat_id`` seen by Telethon for messages sent by the user in the
+        # bot chat.  It is the numeric prefix of a Bot API token.  This is
+        # deliberately separate from target_chat_id: the latter is the
+        # recipient chat for Bot API sends (Philipp's user ID), while this
+        # one identifies the chat in which the user replies.
+        if token:
+            try:
+                self._bot_chat_id = int(token.split(":", 1)[0])
+            except (TypeError, ValueError):
+                ctx.log.warning(
+                    "agent module: could not derive bot chat id from token; "
+                    "falling back to target_chat_id for reply matching",
+                )
+        if self._bot_chat_id is None:
+            self._bot_chat_id = target
 
         self._debounce_s = float(cfg.get("debounce_s", 3))
         self._last_n = int(cfg.get("last_n", 20))
@@ -177,7 +199,7 @@ class AgentModule:
     async def on_outgoing_message(self, event: OutgoingMessage) -> None:
         """Handle replies in the bot chat for active clarification sessions."""
         msg = event.message
-        if msg.chat_id != self._target_chat_id:
+        if msg.chat_id != self._bot_chat_id:
             return
 
         # Option B: reply-to matching — check if the message is a reply

@@ -42,10 +42,11 @@ def _make_app(
     *,
     clarify_timeout_s: float = 300,
     max_clarify_rounds: int = 3,
+    bot_token: str = "tok",
 ) -> App:
     """Build an App with the agent module and a fake send_text that
     records calls and returns incrementing message_ids."""
-    monkeypatch.setenv("AGENT_BOT_TOKEN", "tok")
+    monkeypatch.setenv("AGENT_BOT_TOKEN", bot_token)
 
     _msg_id_counter = [100]
 
@@ -239,6 +240,52 @@ async def test_reply_to_matching(tmp_path: Path, monkeypatch):
     # Final answer posted
     assert len(sent) == 2
     assert "Friday" in sent[1]["text"] or "ANSWER" in sent[1]["text"]
+
+    await app.stop()
+    await app._http.close()  # type: ignore[attr-defined]
+
+
+async def test_reply_matching_uses_bot_chat_id_not_target_chat_id(
+    tmp_path: Path, monkeypatch
+):
+    """The Bot API recipient and the Telethon bot-chat peer are different IDs."""
+    tg = FakeTelegramClient()
+    tg.seed_history(42, [make_message(42, "alice", "hi")])
+    sent: list[dict] = []
+
+    llm = SequencedLLM([
+        "CLARIFY: How long should it be?",
+        "ANSWER: Added for four hours.",
+    ])
+    app = _make_app(
+        tmp_path,
+        monkeypatch,
+        tg,
+        llm,
+        sent,
+        bot_token="8950598695:test-token",
+    )
+    await app.start(app._test_modules_cfg)  # type: ignore[attr-defined]
+
+    await app.inject_draft_update(DraftUpdate(chat_id=42, text="/agent add event"))
+    await asyncio.sleep(0.3)
+    assert len(sent) == 1
+
+    # Bot API sends to target_chat_id=7777, but Telethon sees the private
+    # bot conversation under the bot's own peer ID=8950598695.
+    await app.inject_outgoing(OutgoingMessage(
+        message=make_message(
+            8950598695,
+            "philipp",
+            "ca 4 Stunden",
+            message_id=200,
+            outgoing=True,
+        )
+    ))
+    await asyncio.sleep(0.3)
+
+    assert len(sent) == 2
+    assert "four hours" in sent[1]["text"]
 
     await app.stop()
     await app._http.close()  # type: ignore[attr-defined]
