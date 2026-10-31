@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import aiohttp
 import pytest
@@ -13,7 +12,7 @@ from telegram_assistant.events import DraftUpdate, IncomingMessage, MessageEdite
 from telegram_assistant.markers import MarkerMatch
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.modules.drafting.module import DraftingModule
-from telegram_assistant.state import RuntimeState, StateWriteError
+from telegram_assistant.state import RuntimeState
 from tests.fakes.llm import RecordingLLM, fake_llm
 from tests.fakes.telegram import EditedMessage, FakeTelegramClient, make_message
 
@@ -24,7 +23,7 @@ def _module_config(**overrides: Any) -> dict[str, Any]:
         "default_system_prompt": "SP",
         "last_n": 3,
         "auto_draft_chats": [],
-        "markers": {"draft": "/draft", "auto_draft_on": "/auto_draft on", "auto_draft_off": "/auto_draft off"},
+        "markers": {"draft": "/draft"},
     }
     base.update(overrides)
     return base
@@ -51,8 +50,8 @@ async def test_markers_use_defaults():
     await mod.init(ctx)
     names = {m.name for m in mod.markers()}
     triggers = {m.trigger for m in mod.markers()}
-    assert names == {"draft", "auto_draft_on", "auto_draft_off"}
-    assert triggers == {"/draft", "/auto_draft on", "/auto_draft off"}
+    assert names == {"draft"}
+    assert triggers == {"/draft"}
     await ctx.http.close()
 
 
@@ -60,11 +59,11 @@ async def test_markers_respect_user_overrides(tmp_path: Path):
     mod = DraftingModule()
     ctx, _, _ = await _ctx(
         tmp_path,
-        _module_config(markers={"draft": "!d", "auto_draft_on": "!on", "auto_draft_off": "!off"}),
+        _module_config(markers={"draft": "!d"}),
     )
     await mod.init(ctx)
     triggers = {m.trigger for m in mod.markers()}
-    assert triggers == {"!d", "!on", "!off"}
+    assert triggers == {"!d"}
     await ctx.http.close()
 
 
@@ -127,25 +126,31 @@ async def test_runtime_state_overrides_seed_to_on(tmp_path: Path):
     await ctx.http.close()
 
 
-async def test_auto_on_sets_state_and_confirms(tmp_path: Path):
+async def test_toggle_sets_state_and_overrides_seed(tmp_path: Path):
     mod = DraftingModule()
-    ctx, tg, state = await _ctx(tmp_path, _module_config())
+    ctx, tg, state = await _ctx(tmp_path, _module_config(auto_draft_chats=[1]))
+    tg.seed_history(1, [make_message(1, "alice", "hi")])
     await mod.init(ctx)
-    match = _find_marker(mod, "auto_draft_on")
-    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft on"), match)
-    assert state.for_module("drafting").get("auto_draft", "1", default=None) is True
-    assert tg.drafts[1].startswith("✓ Auto-draft enabled")
+    [toggle] = mod.toggles()
+    assert toggle.key == "drafting.auto_draft"
+    assert toggle.is_on(1) is True  # seed
+    toggle.set(1, False)
+    assert state.for_module("drafting").get("auto_draft", "1", default=None) is False
+    await mod.on_incoming_message(IncomingMessage(make_message(1, "alice", "hi")))
+    assert tg.drafts == {}
+    toggle.set(2, True)
+    tg.seed_history(2, [make_message(2, "bob", "yo")])
+    await mod.on_incoming_message(IncomingMessage(make_message(2, "bob", "yo")))
+    assert tg.drafts[2] == "GENERATED"
     await ctx.http.close()
 
 
-async def test_auto_off_sets_state_and_confirms(tmp_path: Path):
+async def test_obsolete_toggle_text_is_not_a_marker(tmp_path: Path):
     mod = DraftingModule()
-    ctx, tg, state = await _ctx(tmp_path, _module_config(auto_draft_chats=[1]))
+    ctx, _, _ = await _ctx(tmp_path, _module_config())
     await mod.init(ctx)
-    match = _find_marker(mod, "auto_draft_off")
-    await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft off"), match)
-    assert state.for_module("drafting").get("auto_draft", "1", default=None) is False
-    assert tg.drafts[1].startswith("✓ Auto-draft disabled")
+    for text in ("/auto_draft on", "/auto_draft off"):
+        assert not any(m.match(text)[0] for m in mod.markers())
     await ctx.http.close()
 
 
@@ -161,17 +166,6 @@ async def test_draft_marker_runs_pipeline(tmp_path: Path):
     match_with_remainder = MarkerMatch(module="drafting", marker=match.marker, remainder="ask X")
     await mod.on_draft_update(DraftUpdate(chat_id=1, text="/draft ask X"), match_with_remainder)
     assert tg.drafts[1] == "GENERATED"
-    await ctx.http.close()
-
-
-async def test_set_auto_writes_failure_draft_on_state_write_error(tmp_path: Path):
-    mod = DraftingModule()
-    ctx, tg, _ = await _ctx(tmp_path, _module_config())
-    await mod.init(ctx)
-    match = _find_marker(mod, "auto_draft_on")
-    with patch("os.replace", side_effect=OSError("disk full")):
-        await mod.on_draft_update(DraftUpdate(chat_id=1, text="/auto_draft on"), match)
-    assert tg.drafts[1] == "✗ state write failed"
     await ctx.http.close()
 
 

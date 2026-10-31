@@ -102,7 +102,7 @@ async def test_button_toggle_drives_autofix_in_supergroup(setup):
     [edit] = await api.wait_for("editMessageReplyMarkup")
     assert _button_texts(edit["reply_markup"])[0] == "✅ Korrektur vor dem Senden"
 
-    # Persisted in the same place the in-chat marker writes.
+    # Persisted as the module's state.toml override.
     data = tomllib.loads(state_path.read_text())
     assert data["correcting"]["auto_fix"][str(GROUP)] is True
 
@@ -126,14 +126,11 @@ async def test_button_off_overrides_drafting_seed(setup):
     assert 5 not in tg.drafts
 
 
-async def test_in_chat_marker_and_button_stay_consistent(setup):
+async def test_state_toml_and_button_stay_consistent(setup):
     app, api, tg, _ = setup
     await app.start(_modules_cfg())
-
-    # In-chat marker turns auto_fix_sent on …
-    await app.inject_draft_update(DraftUpdate(chat_id=8, text="/auto_fix_sent on"))
-    await app.drain()
-    assert tg.drafts[8].startswith("✓ Auto-fix-sent enabled")
+    # state.toml has auto_fix_sent on (e.g. set in an earlier run) …
+    app._state.for_module("correcting").set("auto_fix_sent", "8", True)
 
     # … the menu shows it …
     api.push(users_shared(8, "Bob"))

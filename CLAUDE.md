@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A modular Telegram **userbot** (runs under a real user account via Telethon/MTProto, *not* the Bot API). The user types "markers" (e.g. `/draft`, `/fix`, `/auto_draft on`) into a chat's **input field** — the bot observes the synced draft, runs a feature, and writes the result back into the same draft (or edits a sent message). The user always reviews before sending. LLM calls (via `pydantic-ai`) are the only outbound data flow.
+A modular Telegram **userbot** (runs under a real user account via Telethon/MTProto, *not* the Bot API). The user types one-shot "markers" (`/draft`, `/fix`, `/agent`) into a chat's **input field** — the bot observes the synced draft, runs a feature, and writes the result back into the same draft (or edits a sent message). Per-chat automatic features (auto-draft, auto-fix, auto-fix-sent, auto-media) have **no** in-chat markers; they are toggled only via the `settings_menu` (`/settings` in the agent bot chat). The user always reviews before sending. LLM calls (via `pydantic-ai`) are the only outbound data flow.
 
 The central trick: markers are detected from Telegram's `UpdateDraftMessage` (text typed but *not* sent). If the user presses Send fast, no draft syncs and the marker is treated as a normal outgoing message and ignored.
 
@@ -48,21 +48,22 @@ A small framework **core** dispatches Telegram events to pluggable **modules**. 
 
 Two files, different writers (see README's config reference table):
 - `config.toml` — user-written: credentials, model, module defaults, marker trigger overrides, **seed** whitelists.
-- `state.toml` — app-written: live per-chat toggles set via in-chat markers. `_auto_on()` in modules reads the state override first, falling back to the config seed list. **state.toml wins at runtime.**
+- `state.toml` — app-written: live per-chat toggles set via the settings menu (`Toggle.set`). `_auto_on()` in modules reads the state override first, falling back to the config seed list. **state.toml wins at runtime.**
 
 `config.example.toml` is the annotated template (copied to `/data/config.toml` on first Docker run by `entrypoint.sh`, which exits 2 to prompt editing).
 
 ### Modules (`src/telegram_assistant/modules/`)
 
-- `drafting` — `/draft` (one-shot, overwrites the draft; if the marker is sent, edits the sent message in place like `/fix-in-sent`) + `/auto_draft on|off` (per-chat). Debounced auto-draft with cooldown; tracks whether the user is mid-typing (`on_plain_draft_update`) to avoid clobbering their input. Optional OpenAI-compatible backend via `[modules.drafting.openai]` (`openai_drafter.py`), else the `pydantic-ai` `Pipeline`.
-- `correcting` — `/fix` (one-shot) + `/auto_fix` (pre-send) + `/auto_fix_sent` (post-send edit via Telegram edit API).
-- `media_reply` — regex-matched URLs in whitelisted chats → `yt-dlp` download → reply with the media file. `/auto_media on|off`.
+- `drafting` — `/draft` (one-shot, overwrites the draft; if the marker is sent, edits the sent message in place like `/fix-in-sent`) + per-chat auto-draft (`auto_draft` toggle). Debounced auto-draft with cooldown; tracks whether the user is mid-typing (`on_plain_draft_update`) to avoid clobbering their input. Optional OpenAI-compatible backend via `[modules.drafting.openai]` (`openai_drafter.py`), else the `pydantic-ai` `Pipeline`.
+- `correcting` — `/fix` (one-shot) + per-chat `auto_fix` (pre-send) and `auto_fix_sent` (post-send edit via Telegram edit API) toggles.
+- `media_reply` — regex-matched URLs in whitelisted chats → `yt-dlp` download → reply with the media file. Per-chat `auto_media` toggle.
 - `agent` — `/agent <instruction>`: debounced, fetches chat history, runs the LLM, posts the answer to a separate Telegram **bot** chat (`bot_sender.py`). "Send-disabled" if `bot_token_env` is unset (LLM still runs, result logged). Clarification answers are read from *outgoing* MTProto messages in the bot chat; commands, settings-menu button texts and empty (service) messages are ignored there.
 - `settings_menu` — `/settings` in the agent bot chat (Bot API `getUpdates` long polling via `ctx.http`, owner-only) → native chat picker → inline ✅/❌ buttons. Toggles come from `ctx.services.toggles()` (every loaded module's `toggles()`); bot token/owner default to `[modules.agent]` via `ctx.services.module_config("agent")`. Bot API chat ids equal Telethon's marked `chat_id`s (`ui.bot_api_chat_id`). Inert without a token. Tests use `tests/fakes/bot_api.py` via the `SettingsMenuModule._api_override` hook.
 
 ### Conventions for new modules
 
-- Implement only the handlers you need (the Protocol's methods are all optional). Register triggers in `markers()`; keep `priority` higher for exact toggles, lower for `CONTAINS` instructions (see drafting: 100 for toggles, 50 for `/draft`).
+- Implement only the handlers you need (the Protocol's methods are all optional). Register one-shot action triggers in `markers()` (`CONTAINS` with an instruction remainder; priorities: `/fix` 70, `/agent` 60, `/draft` 50). Don't add in-chat on/off markers — per-chat switches go through `toggles()`.
+- Marker overrides are read by key from `[modules.<name>.markers]`; keys that match no registered marker name (e.g. old `auto_draft_on`) are ignored, and `ModuleLoader` logs one warning listing them.
 - Read defaults from `ctx.config`, persist per-chat toggles through `ctx.state`, never write `state.toml` directly.
 - Expose per-chat on/off toggles via `toggles() -> list[Toggle]` (`toggles.py`) so they show up in the settings menu. Bind `is_on` to the module's own effective-value logic (`_auto_on()`), `set` to `ctx.state.set`; don't cache toggle state in memory — read state on every event so menu changes apply immediately.
 - Add the class to `module_loader._known_modules()` and document its config in `config.example.toml`.

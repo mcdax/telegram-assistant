@@ -1,4 +1,7 @@
-"""Drafting module. Owns /draft, /auto_draft on, /auto_draft off markers and auto-draft policy.
+"""Drafting module. Owns the /draft marker and auto-draft policy.
+
+Auto-draft is toggled per chat via the settings menu (``toggles()``);
+state.toml overrides the ``auto_draft_chats`` config seed.
 
 /draft seen in a draft overwrites the draft input with a generated reply.
 /draft seen in an already-sent message (the user pressed Send with the marker)
@@ -29,7 +32,6 @@ from telegram_assistant.events import (
 )
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.state import StateWriteError
 from telegram_assistant.toggles import Toggle, chat_ids
 
 from .openai_drafter import OpenAIDrafter, load_openai_config
@@ -38,8 +40,6 @@ from .pipeline import Pipeline
 
 DEFAULT_MARKERS = {
     "draft": "/draft",
-    "auto_draft_on": "/auto_draft on",
-    "auto_draft_off": "/auto_draft off",
 }
 DEFAULT_DEBOUNCE_S = 60
 
@@ -69,18 +69,6 @@ class DraftingModule:
         cfg = ctx.config
         user_markers = cfg.get("markers", {})
         self._markers = [
-            Marker(
-                name="auto_draft_on",
-                trigger=user_markers.get("auto_draft_on", DEFAULT_MARKERS["auto_draft_on"]),
-                kind=MatchKind.EXACT,
-                priority=100,
-            ),
-            Marker(
-                name="auto_draft_off",
-                trigger=user_markers.get("auto_draft_off", DEFAULT_MARKERS["auto_draft_off"]),
-                kind=MatchKind.EXACT,
-                priority=100,
-            ),
             Marker(
                 name="draft",
                 trigger=user_markers.get("draft", DEFAULT_MARKERS["draft"]),
@@ -210,11 +198,7 @@ class DraftingModule:
             "on_draft_update chat=%s marker=%s remainder=%r",
             event.chat_id, name, match.remainder[:80],
         )
-        if name == "auto_draft_on":
-            await self._set_auto(event.chat_id, True)
-        elif name == "auto_draft_off":
-            await self._set_auto(event.chat_id, False)
-        elif name == "draft":
+        if name == "draft":
             await self._draft(chat_id=event.chat_id, chat_title="", instruction=match.remainder)
 
     def _draft_marker(self) -> Marker | None:
@@ -282,16 +266,6 @@ class DraftingModule:
             return False
         task.cancel()
         return True
-
-    async def _set_auto(self, chat_id: int, on: bool) -> None:
-        assert self._ctx is not None
-        try:
-            self._ctx.state.set("auto_draft", str(chat_id), on)
-            word = "enabled" if on else "disabled"
-            text = f"✓ Auto-draft {word} for this chat"
-        except StateWriteError:
-            text = "✗ state write failed"
-        await self._ctx.tg.write_draft(chat_id, text)
 
     def _auto_on(self, chat_id: int) -> bool:
         assert self._ctx is not None

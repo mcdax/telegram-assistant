@@ -44,7 +44,8 @@ timeout_s = 30
 
 # ---------- Module: drafting ----------
 # Drafts replies in your voice using the chat history and an LLM. Owns the
-# /draft marker and the /auto_draft on|off runtime toggles for auto-drafting.
+# /draft marker and auto-drafting ("Antwortvorschläge"), which you toggle
+# per chat via /settings in the bot chat ([modules.settings_menu]).
 [modules.drafting]
 enabled = true
 
@@ -58,7 +59,7 @@ last_n = 20
 
 # Initial whitelist of chat IDs where incoming messages trigger auto-draft.
 # This is a seed only — the runtime truth lives in state.toml and is
-# toggled with /auto_draft on / /auto_draft off in-chat.
+# toggled per chat via /settings in the bot chat.
 auto_draft_chats = []
 
 # Debounce window (seconds) for auto-draft. The first incoming message in
@@ -71,10 +72,10 @@ auto_draft_debounce_s = 60
 
 # Trigger strings for this module's markers. Keys are the stable internal
 # names; values are whatever you want to type in your Telegram input.
+# Unknown keys (e.g. the removed auto_draft_on/auto_draft_off toggle markers
+# from older configs) are ignored with a warning at startup.
 [modules.drafting.markers]
-draft          = "/draft"
-auto_draft_on  = "/auto_draft on"
-auto_draft_off = "/auto_draft off"
+draft = "/draft"
 
 # Optional: use a dedicated OpenAI-compatible backend for drafting instead of
 # the top-level [llm] (Pydantic AI) path. When ALL of base_url, model, and
@@ -112,17 +113,16 @@ auto_draft_off = "/auto_draft off"
 
 # ---------- Module: correcting ----------
 # Rewrites your text for grammar / spelling / punctuation.
-#   /fix <text>            — one-shot: rewrites the remainder of the current draft.
-#   /auto_fix on | off     — per-chat toggle. When on, EVERY draft you type in
-#                            this chat is rewritten as you type. Tradeoff:
-#                            your input field visibly updates after a short
-#                            LLM roundtrip.
-#   /auto_fix_sent on|off  — per-chat toggle. When on, every message you SEND
-#                            in this chat is edited post-send via Telegram's
-#                            edit API. Tradeoff: the recipient briefly sees
-#                            the original and then the corrected version
-#                            with an "edited" marker.
-# Both toggles persist in state.toml under [correcting.auto_fix] and
+#   /fix <text>  — one-shot: rewrites the remainder of the current draft.
+# Per-chat toggles (switch them via /settings in the bot chat):
+#   "Korrektur vor dem Senden" (auto_fix) — EVERY draft you type in this chat
+#       is rewritten as you type. Tradeoff: your input field visibly updates
+#       after a short LLM roundtrip.
+#   "Korrektur nach dem Senden" (auto_fix_sent) — every message you SEND in
+#       this chat is edited post-send via Telegram's edit API. Tradeoff: the
+#       recipient briefly sees the original and then the corrected version
+#       with an "edited" marker.
+# Both persist in state.toml under [correcting.auto_fix] and
 # [correcting.auto_fix_sent]. They are independent — you can enable any
 # combination per chat.
 [modules.correcting]
@@ -136,11 +136,7 @@ system_prompt = "Rewrite the given text correcting grammar, spelling, and punctu
 context_last_n = 5
 
 [modules.correcting.markers]
-fix               = "/fix"
-auto_fix_on       = "/auto_fix on"
-auto_fix_off      = "/auto_fix off"
-auto_fix_sent_on  = "/auto_fix_sent on"
-auto_fix_sent_off = "/auto_fix_sent off"
+fix = "/fix"
 
 
 # ---------- Module: media_reply ----------
@@ -148,25 +144,20 @@ auto_fix_sent_off = "/auto_fix_sent off"
 # module downloads the media with the configured backend and replies with
 # the file. Requires ffmpeg for most sites (already bundled in the image).
 #
-#   /auto_media on | off   — per-chat toggle. Persists in state.toml
-#                            under [media_reply.auto_media].
+# Per-chat toggle "Medien-Antworten" (auto_media): switch it via /settings in
+# the bot chat. Persists in state.toml under [media_reply.auto_media].
 [modules.media_reply]
 enabled = true
 
 # Initial whitelist of chat IDs. This is a seed only — the runtime truth
-# lives in state.toml and is toggled with /auto_media on / /auto_media off
-# in-chat. Empty list means no chats have media-reply unless enabled via
-# the marker.
+# lives in state.toml and is toggled per chat via /settings in the bot chat.
+# Empty list means no chats have media-reply unless enabled there.
 chats = []
 
 # "reply" = send the media as a reply to the original message. "draft" is
 # reserved for a future release.
 send_as = "reply"
 download_timeout_s = 60
-
-[modules.media_reply.markers]
-auto_media_on  = "/auto_media on"
-auto_media_off = "/auto_media off"
 
 # One handler block per URL family. Add more by repeating the section.
 [[modules.media_reply.handlers]]
@@ -236,11 +227,12 @@ agent = "/agent"
 
 
 # ---------- Module: settings_menu ----------
-# Per-chat settings via inline buttons in the agent bot's chat. Send
+# Per-chat settings via inline buttons in the agent bot's chat — the only
+# way to switch per-chat features (there are no in-chat toggle markers). Send
 # /settings (or /start) to the bot, pick a person or group with the native
 # chat picker, then tap ✅/❌ to flip that chat's toggles (auto_fix,
 # auto_fix_sent, auto_draft, auto_media — only for loaded modules).
-# Buttons write the same state.toml entries as the in-chat markers.
+# Buttons write state.toml overrides, which win over the seed lists above.
 # "📋 Übersicht" lists every chat with at least one feature on.
 #
 # Uses Bot API long polling (getUpdates, only message + callback_query);

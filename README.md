@@ -2,14 +2,14 @@
 
 ## Overview
 
-A modular Telegram **userbot** — it runs under your own Telegram account (MTProto, not the Bot API) and augments your chats with LLM-driven features. Markers you type into the chat input (e.g. `/draft`, `/fix`, `/auto_draft on`) trigger per-chat behaviour. All generated text lands as a native Telegram draft (or a message edit), so you always review and send manually.
+A modular Telegram **userbot** — it runs under your own Telegram account (MTProto, not the Bot API) and augments your chats with LLM-driven features. Markers you type into the chat input (`/draft`, `/fix`, `/agent`) trigger one-shot actions; per-chat automatic features are switched on and off in the **settings menu** (`/settings` to the bot). All generated text lands as a native Telegram draft (or a message edit), so you always review and send manually.
 
 **Features:**
 
 - **Reply drafting** — one-shot `/draft` or per-chat auto-drafting on incoming messages, using conversation history + optional external context enrichment.
-- **Self-correction** — one-shot `/fix` for grammar/spelling/punctuation, plus per-chat pre-send (`/auto_fix`) and post-send (`/auto_fix_sent`) modes.
+- **Self-correction** — one-shot `/fix` for grammar/spelling/punctuation, plus per-chat pre-send (auto-fix) and post-send (auto-fix-sent) modes.
 - **Media-URL replies** — regex-matched URLs in whitelisted chats are downloaded via `yt-dlp` and replied with the media file.
-- **Settings menu** — per-chat toggles via inline buttons in the agent bot's chat (`/settings`), with Telegram's native person/group picker and an overview of everything that's on.
+- **Settings menu** — *the* way to switch per-chat features: inline buttons in the agent bot's chat (`/settings`), with Telegram's native person/group picker and an overview of everything that's on.
 - **Plugin architecture** — a small framework core (Telegram client, event bus, marker registry, config/state, LLM factory) with built-in modules (`drafting`, `correcting`, `media_reply`, `agent`, `settings_menu`). Adding a feature = one module file + a config block.
 
 **Privacy:** LLM calls are the only outbound data flow. Chat content leaves your machine only to whichever provider matches `[llm].model` (Anthropic, OpenAI, Google, Ollama for local, etc. — whatever `pydantic-ai` supports). Enrichment is opt-in via a URL you control.
@@ -21,9 +21,31 @@ A modular Telegram **userbot** — it runs under your own Telegram account (MTPr
 
 ## Examples
 
-All markers stay in your Telegram input field — **don't press Send**. Type the marker, pause briefly (your official client syncs the draft to the server, which we observe). The bot processes, and your input field updates with the result.
+### Per-chat features: `/settings` in the bot chat
 
-### `/draft` — one-shot reply
+Automatic per-chat features are switched exclusively in the settings menu of the agent bot — there are no in-chat toggle markers.
+
+1. Open the chat with the agent bot and send `/settings` (or `/start`; the command is registered in the bot's menu at startup).
+2. Tap **👤 Person wählen** or **👥 Gruppe wählen** and pick the chat in Telegram's native picker.
+3. The bot replies with `⚙️ Einstellungen für: <Name>` and one ✅/❌ button per feature — tap to toggle; it takes effect immediately.
+4. **📋 Übersicht** lists every chat with at least one feature on, each with a button to open its menu.
+
+| Button | Feature |
+|---|---|
+| *Antwortvorschläge* (`auto_draft`) | Every incoming message triggers draft generation. Debounced: the first drafts immediately; subsequent incomings within `auto_draft_debounce_s` (default 60s) reset a silence timer. When you send your own reply, the cooldown resets. Skipped while you have a non-empty draft in the chat, so your typing is never overwritten. |
+| *Korrektur vor dem Senden* (`auto_fix`) | Anything you type in that chat gets auto-corrected as you pause; your input field visibly updates. Review + send as usual. |
+| *Korrektur nach dem Senden* (`auto_fix_sent`) | Every message you send gets edited via Telegram's edit API after sending. Recipients briefly see the original, then the corrected version with an "edited" marker. |
+| *Medien-Antworten* (`auto_media`) | Incoming messages matching a configured URL regex (Instagram / TikTok / YouTube / …) are downloaded via `yt-dlp` and replied with the media file. Handlers live under `[modules.media_reply.handlers]`. |
+
+Only features of loaded modules are shown. A button writes the module's override to `state.toml`; the effective value is that override, else the config seed list (`auto_draft_chats`, `[modules.media_reply].chats`).
+
+Requires the agent bot (`[modules.agent].bot_token_env`, by default `AGENT_BOT_TOKEN`) and your own user id as `[modules.agent].target_chat_id` (or `[modules.settings_menu].owner_user_id`). Only your updates are processed. The module long-polls `getUpdates`, so no other process (and no webhook) may consume that bot's updates. Without a token it stays inert.
+
+### One-shot markers
+
+These markers stay in your Telegram input field — **don't press Send**. Type the marker, pause briefly (your official client syncs the draft to the server, which we observe). The bot processes, and your input field updates with the result.
+
+#### `/draft` — one-shot reply
 
 ```
 /draft
@@ -35,62 +57,19 @@ Pipeline: fetch recent chat history → optional enrichment POST → LLM → dra
 /draft keep it short and ask about the invoice
 ```
 
-The text before/after `/draft` becomes the instruction.
+The text before/after `/draft` becomes the instruction. If you do send it, the sent message is edited in place with the generated reply.
 
-### `/fix <text>` — one-shot rewrite
+#### `/fix <text>` — one-shot rewrite
 
 ```
 /fix hi how ar you i wan to know wen you cam
 ```
 
-Replaces the input with the LLM-corrected version. Preserves meaning, tone, language.
+Replaces the input with the LLM-corrected version. Preserves meaning, tone, language. If sent, the sent message is edited in place.
 
-### `/auto_draft on` / `/auto_draft off` — per-chat auto-drafting
+#### `/agent <instruction>`
 
-In a chat where you want auto-replies:
-
-```
-/auto_draft on
-```
-
-Confirmation appears (`✓ Auto-draft enabled for this chat`). Clear it. From then on, every incoming message in that chat triggers draft generation. Debounced: the first drafts immediately; subsequent incomings within `auto_draft_debounce_s` (default 60s) reset a silence timer. When you send your own reply, the cooldown resets.
-
-The module also checks whether you currently have a non-empty draft in the chat — if yes, the auto-draft is skipped so it doesn't overwrite your typing.
-
-### `/auto_fix on` / `/auto_fix off` — pre-send autofix
-
-```
-/auto_fix on
-```
-
-From then on, anything you type in that chat gets auto-corrected as you pause. Your input field visibly updates to the corrected version. Review + send as usual.
-
-### `/auto_fix_sent on` / `/auto_fix_sent off` — post-send autofix
-
-```
-/auto_fix_sent on
-```
-
-Every message you send in that chat gets edited via Telegram's edit API after sending. Recipients briefly see the original and then the corrected version with an "edited" marker. Useful for casual chats where you type fast.
-
-### `/auto_media on` / `/auto_media off` — per-chat media replies
-
-```
-/auto_media on
-```
-
-In that chat, any incoming message matching a configured URL regex (Instagram / TikTok / YouTube / etc.) triggers a download via `yt-dlp` and a reply with the media file. Handlers are configured under `[modules.media_reply.handlers]`.
-
-### `/settings` — settings menu in the bot chat
-
-Instead of typing toggle markers into each chat, open the chat with the agent bot and send `/settings` (or `/start`; the command is registered in the bot's menu at startup). A persistent keyboard appears:
-
-- **👤 Person wählen** / **👥 Gruppe wählen** — Telegram's native chat picker. After picking, the bot replies with `⚙️ Einstellungen für: <Name>` and one ✅/❌ button per feature: *Korrektur vor dem Senden* (`auto_fix`), *Korrektur nach dem Senden* (`auto_fix_sent`), *Antwortvorschläge* (`auto_draft`), *Medien-Antworten* (`auto_media`). Only features of loaded modules are shown.
-- **📋 Übersicht** — every chat with at least one feature on, with a button to open its menu.
-
-Tapping a button flips the same `state.toml` entry the in-chat marker writes (so `/auto_fix on` in a chat and the button always agree; the effective value is the state override, else the config seed) and takes effect immediately.
-
-Requires the agent bot (`[modules.agent].bot_token_env`, by default `AGENT_BOT_TOKEN`) and your own user id as `[modules.agent].target_chat_id` (or `[modules.settings_menu].owner_user_id`). Only your updates are processed. The module long-polls `getUpdates`, so no other process (and no webhook) may consume that bot's updates. Without a token it stays inert.
+Runs the agent over the chat history and posts its answer to the agent bot chat (see `[modules.agent]` in `config.example.toml`).
 
 ---
 
@@ -129,7 +108,7 @@ On first run against an empty `./data/`, the container writes `./data/config.tom
 Edit `./data/config.toml`:
 - `[telegram].api_id` / `api_hash` — unless you set them in `.env`
 - `[llm].model` — e.g. `anthropic:claude-sonnet-4-6`
-- `[modules.drafting].auto_draft_chats`, `[modules.media_reply].chats` — optional seed whitelists (the runtime source of truth is `state.toml`, toggled via markers in-chat)
+- `[modules.drafting].auto_draft_chats`, `[modules.media_reply].chats` — optional seed whitelists (the runtime source of truth is `state.toml`, toggled per chat via `/settings` in the bot chat)
 - `[modules.drafting].enrichment_url` — optional external context endpoint
 
 ### 5. Telethon login (interactive, one-time)
@@ -167,7 +146,7 @@ Your live configuration lives in two files under `./data/`:
 | File | Who writes it | Contents |
 |---|---|---|
 | `config.toml` | you | Telegram credentials, LLM model, module defaults, marker triggers, initial whitelists |
-| `state.toml` | the app | Runtime per-chat overrides (in-chat markers or `/settings` menu): `auto_draft`, `auto_fix`, `auto_fix_sent`, `auto_media` |
+| `state.toml` | the app | Runtime per-chat overrides (set via the `/settings` menu): `auto_draft`, `auto_fix`, `auto_fix_sent`, `auto_media` |
 
 `config.example.toml` at the repo root is the annotated template copied by the first-run bootstrap. Read it for the full set of keys.
 

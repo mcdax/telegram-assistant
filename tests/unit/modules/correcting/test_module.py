@@ -55,11 +55,7 @@ async def test_default_markers(tmp_path: Path):
     ctx, _, _ = await _ctx(tmp_path)
     await mod.init(ctx)
     triggers = {m.trigger for m in mod.markers()}
-    assert triggers == {
-        "/fix",
-        "/auto_fix on", "/auto_fix off",
-        "/auto_fix_sent on", "/auto_fix_sent off",
-    }
+    assert triggers == {"/fix"}
     await ctx.http.close()
 
 
@@ -67,15 +63,11 @@ async def test_custom_markers(tmp_path: Path):
     mod = CorrectingModule()
     ctx, _, _ = await _ctx(
         tmp_path,
-        markers={
-            "fix": "!fix",
-            "auto_fix_on": "!af on", "auto_fix_off": "!af off",
-            "auto_fix_sent_on": "!afs on", "auto_fix_sent_off": "!afs off",
-        },
+        markers={"fix": "!fix"},
     )
     await mod.init(ctx)
     triggers = {m.trigger for m in mod.markers()}
-    assert triggers == {"!fix", "!af on", "!af off", "!afs on", "!afs off"}
+    assert triggers == {"!fix"}
     await ctx.http.close()
 
 
@@ -134,42 +126,6 @@ async def test_fix_empty_remainder_ignored(tmp_path: Path):
     match = MarkerMatch(module="correcting", marker=_marker(mod, "fix"), remainder="")
     await mod.on_draft_update(DraftUpdate(chat_id=5, text="/fix"), match)
     assert tg.drafts == {}
-    await ctx.http.close()
-
-
-async def test_auto_fix_on_sets_state_and_confirms(tmp_path: Path):
-    mod = CorrectingModule()
-    ctx, tg, state = await _ctx(tmp_path)
-    await mod.init(ctx)
-    match = MarkerMatch(module="correcting", marker=_marker(mod, "auto_fix_on"), remainder="")
-    await mod.on_draft_update(DraftUpdate(chat_id=3, text="/auto_fix on"), match)
-    assert state.for_module("correcting").get("auto_fix", "3", default=None) is True
-    assert tg.drafts[3].startswith("✓ Auto-fix enabled")
-    await ctx.http.close()
-
-
-async def test_auto_fix_off_sets_state_and_confirms(tmp_path: Path):
-    mod = CorrectingModule()
-    ctx, tg, state = await _ctx(tmp_path)
-    await mod.init(ctx)
-    state.for_module("correcting").set("auto_fix", "3", True)
-    match = MarkerMatch(module="correcting", marker=_marker(mod, "auto_fix_off"), remainder="")
-    await mod.on_draft_update(DraftUpdate(chat_id=3, text="/auto_fix off"), match)
-    assert state.for_module("correcting").get("auto_fix", "3", default=None) is False
-    assert tg.drafts[3].startswith("✓ Auto-fix disabled")
-    await ctx.http.close()
-
-
-async def test_auto_fix_sent_on_sets_state_and_confirms(tmp_path: Path):
-    mod = CorrectingModule()
-    ctx, tg, state = await _ctx(tmp_path)
-    await mod.init(ctx)
-    match = MarkerMatch(
-        module="correcting", marker=_marker(mod, "auto_fix_sent_on"), remainder=""
-    )
-    await mod.on_draft_update(DraftUpdate(chat_id=3, text="/auto_fix_sent on"), match)
-    assert state.for_module("correcting").get("auto_fix_sent", "3", default=None) is True
-    assert tg.drafts[3].startswith("✓ Auto-fix-sent enabled")
     await ctx.http.close()
 
 

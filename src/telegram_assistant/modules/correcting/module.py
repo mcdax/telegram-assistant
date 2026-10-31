@@ -5,24 +5,21 @@ Owns:
                          draft with the corrected remainder. If seen in an
                          already-sent message: edit the sent message in place
                          with the corrected remainder.
-  /auto_fix on|off     — toggle per-chat pre-send autofix (rewrites every draft)
-  /auto_fix_sent on|off — toggle per-chat post-send autofix (edits every sent message)
+
+Per-chat behaviours, toggled via the settings menu (``toggles()``):
+  auto_fix      — pre-send autofix (rewrites every draft)
+  auto_fix_sent — post-send autofix (edits every sent message)
 """
 from __future__ import annotations
 
 from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.state import StateWriteError
 from telegram_assistant.toggles import Toggle, chat_ids
 
 
 DEFAULT_MARKERS = {
     "fix": "/fix",
-    "auto_fix_on": "/auto_fix on",
-    "auto_fix_off": "/auto_fix off",
-    "auto_fix_sent_on": "/auto_fix_sent on",
-    "auto_fix_sent_off": "/auto_fix_sent off",
 }
 
 _AUTO_FIX_BUCKET = "auto_fix"
@@ -78,22 +75,6 @@ class CorrectingModule:
 
         self._markers = [
             Marker(name="fix", trigger=trigger("fix"), kind=MatchKind.CONTAINS, priority=70),
-            Marker(
-                name="auto_fix_on", trigger=trigger("auto_fix_on"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
-            Marker(
-                name="auto_fix_off", trigger=trigger("auto_fix_off"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
-            Marker(
-                name="auto_fix_sent_on", trigger=trigger("auto_fix_sent_on"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
-            Marker(
-                name="auto_fix_sent_off", trigger=trigger("auto_fix_sent_off"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
         ]
 
     async def shutdown(self) -> None:
@@ -128,12 +109,6 @@ class CorrectingModule:
         )
         if name == "fix":
             await self._fix_remainder(event.chat_id, match.remainder)
-        elif name == "auto_fix_on":
-            await self._set_toggle(event.chat_id, _AUTO_FIX_BUCKET, True, "Auto-fix")
-        elif name == "auto_fix_off":
-            await self._set_toggle(event.chat_id, _AUTO_FIX_BUCKET, False, "Auto-fix")
-        elif name == "auto_fix_sent_on":
-            await self._set_toggle(event.chat_id, _AUTO_FIX_SENT_BUCKET, True, "Auto-fix-sent")
         elif name == "auto_fix_sent_off":
             await self._set_toggle(event.chat_id, _AUTO_FIX_SENT_BUCKET, False, "Auto-fix-sent")
 
@@ -262,18 +237,6 @@ class CorrectingModule:
         except Exception as e:
             self._ctx.log.warning("correcting failed: %s", e)
             return None
-
-    async def _set_toggle(
-        self, chat_id: int, bucket: str, on: bool, label: str
-    ) -> None:
-        assert self._ctx is not None
-        try:
-            self._ctx.state.set(bucket, str(chat_id), on)
-            word = "enabled" if on else "disabled"
-            text = f"✓ {label} {word} for this chat"
-        except StateWriteError:
-            text = "✗ state write failed"
-        await self._ctx.tg.write_draft(chat_id, text)
 
     def _is_on(self, chat_id: int, bucket: str) -> bool:
         assert self._ctx is not None

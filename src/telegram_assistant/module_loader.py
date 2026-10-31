@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from .markers import MarkerRegistry
+from .markers import Marker, MarkerRegistry
 from .module import Module, ModuleContext
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ class ModuleLoader:
     ) -> list[Module]:
         known = _known_modules()
         loaded: list[Module] = []
+        ignored_markers: list[str] = []
         for name, cfg in modules_cfg.items():
             if not cfg.get("enabled", False):
                 continue
@@ -53,6 +54,25 @@ class ModuleLoader:
             except Exception as exc:
                 log.error("module %r init failed, skipping: %s", name, exc)
                 continue
-            registry.register(name, instance.markers())
+            markers = instance.markers()
+            ignored_markers += _unknown_marker_keys(name, cfg, markers)
+            registry.register(name, markers)
             loaded.append(instance)
+        if ignored_markers:
+            log.warning(
+                "ignoring unknown/obsolete [modules.*.markers] keys: %s "
+                "(per-chat toggles are switched via /settings in the bot chat)",
+                ", ".join(ignored_markers),
+            )
         return loaded
+
+
+def _unknown_marker_keys(name: str, cfg: dict[str, Any], markers: list[Marker]) -> list[str]:
+    """`<module>.<key>` for override keys in `[modules.<name>.markers]` that no
+    registered marker uses, e.g. the removed `auto_draft_on` toggle triggers.
+    Modules read overrides by key, so such leftovers are inert; we only warn."""
+    overrides = cfg.get("markers")
+    if not isinstance(overrides, dict):
+        return []
+    names = {m.name for m in markers}
+    return [f"{name}.{key}" for key in overrides if key not in names]

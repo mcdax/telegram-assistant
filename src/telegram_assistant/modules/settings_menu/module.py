@@ -4,9 +4,9 @@ The owner sends ``/start`` or ``/settings`` to the bot (the same bot the
 agent module posts through) and gets a persistent reply keyboard with
 Telegram's native chat pickers. Picking a chat opens an inline keyboard
 with one ✅/❌ button per toggle exposed by the loaded modules
-(``Module.toggles()``); tapping flips the *same* state.toml entry the
-in-chat markers (``/auto_fix on`` …) write, then edits the keyboard in
-place. "📋 Übersicht" lists every chat with at least one feature on.
+(``Module.toggles()``); tapping flips the module's state.toml override
+(which wins over the config seed lists), then edits the keyboard in
+place. This is the only way to switch per-chat features. "📋 Übersicht" lists every chat with at least one feature on.
 
 Transport is Bot API long polling (``getUpdates``) restricted to
 ``message`` and ``callback_query``; updates from anyone but the owner

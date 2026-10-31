@@ -1,6 +1,6 @@
 """Per-chat feature toggles that modules expose to cross-module UIs.
 
-A module that owns per-chat on/off switches (``/auto_fix on`` etc.) can
+A module that owns per-chat on/off switches (auto-fix, auto-draft …) can
 implement ``toggles() -> list[Toggle]``. Each ``Toggle`` is bound to the
 module's own effective-value logic (state override, else config seed) and
 writes through the module's ``ModuleState`` — so the app's

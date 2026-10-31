@@ -94,7 +94,69 @@ async def test_markers_collected_into_registry(tmp_path: Path):
     )
     assert registry.resolve("/fix hi") is not None
     assert registry.resolve("/draft") is not None
-    assert registry.resolve("/auto_draft on") is not None
+    assert registry.resolve("/auto_draft on") is None
+    await http.close()
+
+
+async def test_obsolete_marker_override_keys_warn_once(tmp_path: Path, caplog):
+    """Old configs may still override the removed toggle markers
+    (auto_draft_on, auto_fix_on, …): startup must ignore them with one warning."""
+    make, http = await _build_ctx_factory(tmp_path)
+    registry = MarkerRegistry()
+    caplog.set_level(logging.WARNING, logger="telegram_assistant.module_loader")
+    loaded = await ModuleLoader().load(
+        {
+            "drafting": {
+                "enabled": True,
+                "default_system_prompt": "x",
+                "last_n": 10,
+                "auto_draft_chats": [],
+                "markers": {
+                    "draft": "!d",
+                    "auto_draft_on": "/auto_draft on",
+                    "auto_draft_off": "/auto_draft off",
+                },
+            },
+            "correcting": {
+                "enabled": True,
+                "system_prompt": "x",
+                "markers": {"fix": "/fix", "auto_fix_on": "/auto_fix on", "auto_fix_sent_off": "x"},
+            },
+            "media_reply": {
+                "enabled": True,
+                "chats": [],
+                "handlers": [],
+                "markers": {"auto_media_on": "/auto_media on"},
+            },
+        },
+        registry,
+        make,
+    )
+    assert {m.name for m in loaded} == {"drafting", "correcting", "media_reply"}
+    assert registry.resolve("!d") is not None
+    assert registry.resolve("/auto_draft on") is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    for key in (
+        "drafting.auto_draft_on", "drafting.auto_draft_off",
+        "correcting.auto_fix_on", "correcting.auto_fix_sent_off",
+        "media_reply.auto_media_on",
+    ):
+        assert key in msg
+    assert "drafting.draft" not in msg and "correcting.fix" not in msg
+    await http.close()
+
+
+async def test_no_warning_for_known_marker_keys(tmp_path: Path, caplog):
+    make, http = await _build_ctx_factory(tmp_path)
+    caplog.set_level(logging.WARNING, logger="telegram_assistant.module_loader")
+    await ModuleLoader().load(
+        {"correcting": {"enabled": True, "system_prompt": "x", "markers": {"fix": "!f"}}},
+        MarkerRegistry(),
+        make,
+    )
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
     await http.close()
 
 

@@ -1,10 +1,8 @@
 """Media-reply module. Matches URL regexes in incoming messages, downloads, replies.
 
-Per-chat toggling:
-  /auto_media on|off — enable / disable URL-aware replies for the current chat.
+Per-chat toggling happens via the settings menu (``toggles()``).
 The config's ``chats`` list seeds the initial whitelist; the runtime truth
-lives in state.toml under ``[media_reply.auto_media]`` and is updated by
-the markers.
+lives in state.toml under ``[media_reply.auto_media]``.
 """
 from __future__ import annotations
 
@@ -14,19 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from telegram_assistant.events import DraftUpdate, IncomingMessage
-from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
+from telegram_assistant.events import IncomingMessage
+from telegram_assistant.markers import Marker
 from telegram_assistant.module import ModuleContext
-from telegram_assistant.state import StateWriteError
 from telegram_assistant.toggles import Toggle, chat_ids
 
 from .backends import DownloadBackend, DownloadError, get_backend
 
 
-DEFAULT_MARKERS = {
-    "auto_media_on": "/auto_media on",
-    "auto_media_off": "/auto_media off",
-}
 _AUTO_MEDIA_BUCKET = "auto_media"
 
 
@@ -46,7 +39,6 @@ class MediaReplyModule:
         self._ctx: ModuleContext | None = None
         self._handlers: list[Handler] = []
         self._chats_seed: set[int] = set()
-        self._markers: list[Marker] = []
 
     async def init(self, ctx: ModuleContext) -> None:
         self._ctx = ctx
@@ -68,27 +60,11 @@ class MediaReplyModule:
                 )
             )
 
-        user_markers = cfg.get("markers", {})
-
-        def trigger(key: str) -> str:
-            return user_markers.get(key, DEFAULT_MARKERS[key])
-
-        self._markers = [
-            Marker(
-                name="auto_media_on", trigger=trigger("auto_media_on"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
-            Marker(
-                name="auto_media_off", trigger=trigger("auto_media_off"),
-                kind=MatchKind.EXACT, priority=100,
-            ),
-        ]
-
     async def shutdown(self) -> None:
         return
 
     def markers(self) -> list[Marker]:
-        return list(self._markers)
+        return []
 
     def toggles(self) -> list[Toggle]:
         assert self._ctx is not None
@@ -103,15 +79,6 @@ class MediaReplyModule:
                 chats=lambda: chat_ids(state.keys(_AUTO_MEDIA_BUCKET)) | self._chats_seed,
             ),
         ]
-
-    async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
-        assert self._ctx is not None
-        name = match.marker.name
-        self._ctx.log.debug("on_draft_update chat=%s marker=%s", event.chat_id, name)
-        if name == "auto_media_on":
-            await self._set_toggle(event.chat_id, True)
-        elif name == "auto_media_off":
-            await self._set_toggle(event.chat_id, False)
 
     async def on_incoming_message(self, event: IncomingMessage) -> None:
         assert self._ctx is not None
@@ -162,13 +129,3 @@ class MediaReplyModule:
         if override is not None:
             return bool(override)
         return chat_id in self._chats_seed
-
-    async def _set_toggle(self, chat_id: int, on: bool) -> None:
-        assert self._ctx is not None
-        try:
-            self._ctx.state.set(_AUTO_MEDIA_BUCKET, str(chat_id), on)
-            word = "enabled" if on else "disabled"
-            text = f"✓ Media-reply {word} for this chat"
-        except StateWriteError:
-            text = "✗ state write failed"
-        await self._ctx.tg.write_draft(chat_id, text)
