@@ -360,3 +360,35 @@ async def test_new_agent_cancels_active_session(tmp_path: Path, monkeypatch):
 
     await app.stop()
     await app._http.close()  # type: ignore[attr-defined]
+
+async def test_settings_menu_traffic_in_bot_chat_is_not_an_answer(tmp_path: Path, monkeypatch):
+    """/settings, reply-keyboard buttons and chat-picker service messages
+    (empty text over MTProto) in the bot chat must not resolve a pending
+    clarification."""
+    tg = FakeTelegramClient()
+    tg.seed_history(42, [make_message(42, "alice", "hi")])
+    sent: list[dict] = []
+
+    llm = SequencedLLM(["CLARIFY: Which weekend?", "ANSWER: Done"])
+    app = _make_app(tmp_path, monkeypatch, tg, llm, sent)
+    await app.start(app._test_modules_cfg)  # type: ignore[attr-defined]
+
+    await app.inject_draft_update(DraftUpdate(chat_id=42, text="/agent tell mara"))
+    await asyncio.sleep(0.3)
+    assert len(sent) == 1
+
+    for i, text in enumerate(["/settings", "/start", "📋 Übersicht", "👤 Person wählen", "", "  "]):
+        msg = make_message(7777, "philipp", text, message_id=300 + i, outgoing=True)
+        await app.inject_outgoing(OutgoingMessage(message=msg))
+    await asyncio.sleep(0.1)
+    assert len(sent) == 1
+    assert len(llm.calls) == 1
+
+    reply = make_message(7777, "philipp", "this weekend", message_id=400, outgoing=True)
+    await app.inject_outgoing(OutgoingMessage(message=reply))
+    await asyncio.sleep(0.3)
+    assert len(sent) == 2
+    assert "USER: this weekend" in llm.calls[1]
+
+    await app.stop()
+    await app._http.close()  # type: ignore[attr-defined]

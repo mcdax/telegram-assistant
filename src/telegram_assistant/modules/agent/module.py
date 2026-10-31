@@ -42,6 +42,7 @@ from telegram_assistant.modules.drafting.openai_drafter import (
     build_payload,
     load_openai_config,
 )
+from telegram_assistant.modules.settings_menu.ui import MENU_BUTTON_TEXTS
 
 from . import bot_sender as _bot_sender
 
@@ -60,6 +61,13 @@ _CLARIFY_SYSTEM_SUFFIX = (
     "of asking again. Ask another CLARIFY question only when a missing "
     "detail is strictly required to perform the action."
 )
+
+
+def _is_clarification_answer(text: str) -> bool:
+    """False for bot-chat traffic that is not a user's answer: empty text
+    (service/media messages), bot commands, settings-menu buttons."""
+    stripped = text.strip()
+    return bool(stripped) and not stripped.startswith("/") and stripped not in MENU_BUTTON_TEXTS
 
 
 @dataclass
@@ -200,6 +208,10 @@ class AgentModule:
         """Handle replies in the bot chat for active clarification sessions."""
         msg = event.message
         if msg.chat_id != self._bot_chat_id:
+            return
+        if not _is_clarification_answer(msg.text):
+            # Settings-menu traffic shares this chat: /settings, reply-keyboard
+            # buttons and the (text-less) chat-picker service messages.
             return
 
         # Option B: reply-to matching — check if the message is a reply

@@ -9,7 +9,8 @@ A modular Telegram **userbot** — it runs under your own Telegram account (MTPr
 - **Reply drafting** — one-shot `/draft` or per-chat auto-drafting on incoming messages, using conversation history + optional external context enrichment.
 - **Self-correction** — one-shot `/fix` for grammar/spelling/punctuation, plus per-chat pre-send (`/auto_fix`) and post-send (`/auto_fix_sent`) modes.
 - **Media-URL replies** — regex-matched URLs in whitelisted chats are downloaded via `yt-dlp` and replied with the media file.
-- **Plugin architecture** — a small framework core (Telegram client, event bus, marker registry, config/state, LLM factory) with three built-in modules (`drafting`, `correcting`, `media_reply`). Adding a feature = one module file + a config block.
+- **Settings menu** — per-chat toggles via inline buttons in the agent bot's chat (`/settings`), with Telegram's native person/group picker and an overview of everything that's on.
+- **Plugin architecture** — a small framework core (Telegram client, event bus, marker registry, config/state, LLM factory) with built-in modules (`drafting`, `correcting`, `media_reply`, `agent`, `settings_menu`). Adding a feature = one module file + a config block.
 
 **Privacy:** LLM calls are the only outbound data flow. Chat content leaves your machine only to whichever provider matches `[llm].model` (Anthropic, OpenAI, Google, Ollama for local, etc. — whatever `pydantic-ai` supports). Enrichment is opt-in via a URL you control.
 
@@ -79,6 +80,17 @@ Every message you send in that chat gets edited via Telegram's edit API after se
 ```
 
 In that chat, any incoming message matching a configured URL regex (Instagram / TikTok / YouTube / etc.) triggers a download via `yt-dlp` and a reply with the media file. Handlers are configured under `[modules.media_reply.handlers]`.
+
+### `/settings` — settings menu in the bot chat
+
+Instead of typing toggle markers into each chat, open the chat with the agent bot and send `/settings` (or `/start`; the command is registered in the bot's menu at startup). A persistent keyboard appears:
+
+- **👤 Person wählen** / **👥 Gruppe wählen** — Telegram's native chat picker. After picking, the bot replies with `⚙️ Einstellungen für: <Name>` and one ✅/❌ button per feature: *Korrektur vor dem Senden* (`auto_fix`), *Korrektur nach dem Senden* (`auto_fix_sent`), *Antwortvorschläge* (`auto_draft`), *Medien-Antworten* (`auto_media`). Only features of loaded modules are shown.
+- **📋 Übersicht** — every chat with at least one feature on, with a button to open its menu.
+
+Tapping a button flips the same `state.toml` entry the in-chat marker writes (so `/auto_fix on` in a chat and the button always agree; the effective value is the state override, else the config seed) and takes effect immediately.
+
+Requires the agent bot (`[modules.agent].bot_token_env`, by default `AGENT_BOT_TOKEN`) and your own user id as `[modules.agent].target_chat_id` (or `[modules.settings_menu].owner_user_id`). Only your updates are processed. The module long-polls `getUpdates`, so no other process (and no webhook) may consume that bot's updates. Without a token it stays inert.
 
 ---
 
@@ -155,7 +167,7 @@ Your live configuration lives in two files under `./data/`:
 | File | Who writes it | Contents |
 |---|---|---|
 | `config.toml` | you | Telegram credentials, LLM model, module defaults, marker triggers, initial whitelists |
-| `state.toml` | the app | Runtime per-chat overrides: `auto_draft`, `auto_fix`, `auto_fix_sent`, `auto_media` |
+| `state.toml` | the app | Runtime per-chat overrides (in-chat markers or `/settings` menu): `auto_draft`, `auto_fix`, `auto_fix_sent`, `auto_media` |
 
 `config.example.toml` at the repo root is the annotated template copied by the first-run bootstrap. Read it for the full set of keys.
 

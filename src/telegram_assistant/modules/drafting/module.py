@@ -30,6 +30,7 @@ from telegram_assistant.events import (
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
+from telegram_assistant.toggles import Toggle, chat_ids
 
 from .openai_drafter import OpenAIDrafter, load_openai_config
 from .pipeline import Pipeline
@@ -111,6 +112,20 @@ class DraftingModule:
 
     def markers(self) -> list[Marker]:
         return list(self._markers)
+
+    def toggles(self) -> list[Toggle]:
+        assert self._ctx is not None
+        state = self._ctx.state
+        return [
+            Toggle(
+                module=self.name,
+                bucket="auto_draft",
+                label="Antwortvorschläge",
+                is_on=self._auto_on,
+                set=lambda chat_id, on: state.set("auto_draft", str(chat_id), on),
+                chats=lambda: chat_ids(state.keys("auto_draft")) | self._auto_draft_seed,
+            ),
+        ]
 
     async def on_incoming_message(self, event: IncomingMessage) -> None:
         assert self._ctx is not None

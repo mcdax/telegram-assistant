@@ -13,7 +13,7 @@ from typing import Awaitable, Callable
 from telethon import TelegramClient as _Telethon
 from telethon import events as _events
 from telethon.tl.functions.messages import SaveDraftRequest
-from telethon.utils import get_peer_id
+from telethon.utils import get_display_name, get_peer_id
 
 from .events import Attachment, DraftUpdate, IncomingMessage, Message, MessageEdited, OutgoingMessage
 
@@ -153,6 +153,16 @@ class TelethonTelegramClient:
         dest_dir.mkdir(parents=True, exist_ok=True)
         path = await self._client.download_media(messages, file=str(dest_dir) + "/")
         return Path(path)
+
+    async def get_chat_name(self, chat_id: int) -> str | None:
+        # chat_id is Telethon's "marked" peer id (users > 0, basic groups
+        # -id, channels/supergroups -100…), which get_entity accepts as-is.
+        try:
+            entity = await self._client.get_entity(chat_id)
+        except Exception as e:
+            log.debug("get_chat_name chat=%s unresolved: %s", chat_id, e)
+            return None
+        return get_display_name(entity) or None
 
     async def _to_message(self, event) -> Message:
         sender = await event.get_sender()

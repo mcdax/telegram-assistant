@@ -29,6 +29,7 @@ class FakeTelegramClient:
     sent: list[SentMessage] = field(default_factory=list)
     edits: list[EditedMessage] = field(default_factory=list)
     history: dict[int, list[Message]] = field(default_factory=dict)
+    names: dict[int, str] = field(default_factory=dict)
 
     async def send_message(
         self,
@@ -52,6 +53,9 @@ class FakeTelegramClient:
         p = dest_dir / f"msg-{message_id}.bin"
         p.write_bytes(b"fake-media")
         return p
+
+    async def get_chat_name(self, chat_id: int) -> str | None:
+        return self.names.get(chat_id)
 
     async def connect(self) -> None:
         return

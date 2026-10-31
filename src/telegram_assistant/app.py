@@ -26,6 +26,7 @@ from .module import Module, ModuleContext
 from .module_loader import ModuleLoader
 from .state import RuntimeState
 from .telegram_client import TelegramClient
+from .toggles import Toggle
 
 log = logging.getLogger(__name__)
 
@@ -47,8 +48,12 @@ class App:
         self._registry = MarkerRegistry()
         self._loop_protect = LoopProtection()
         self._modules: list[Module] = []
+        self._modules_cfg: dict[str, dict[str, Any]] = {}
 
     async def start(self, modules_cfg: dict[str, dict[str, Any]]) -> None:
+        self._modules_cfg = modules_cfg
+        services = _Services(self)
+
         def make_ctx(module_name: str, config: dict[str, Any]) -> ModuleContext:
             return ModuleContext(
                 tg=_LoopProtectingClient(self._tg, self._loop_protect),
@@ -57,6 +62,7 @@ class App:
                 config=config,
                 state=self._state.for_module(module_name),
                 log=logging.getLogger(f"module.{module_name}"),
+                services=services,
             )
 
         self._modules = await ModuleLoader().load(modules_cfg, self._registry, make_ctx)
@@ -160,6 +166,23 @@ def _truncate(text: str, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
+
+
+class _Services:
+    """AppServices implementation handed to every module via ModuleContext."""
+
+    def __init__(self, app: App) -> None:
+        self._app = app
+
+    def toggles(self) -> list[Toggle]:
+        out: list[Toggle] = []
+        for m in self._app._modules:
+            if hasattr(m, "toggles"):
+                out.extend(m.toggles())
+        return out
+
+    def module_config(self, name: str) -> dict[str, Any]:
+        return dict(self._app._modules_cfg.get(name) or {})
 
 
 class _LoopProtectingClient:

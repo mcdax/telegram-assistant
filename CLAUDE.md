@@ -38,7 +38,7 @@ A small framework **core** dispatches Telegram events to pluggable **modules**. 
   - Wraps the real client in `_LoopProtectingClient` so every `write_draft` we make is recorded; the matching inbound `DraftUpdate` is then suppressed (`loop_protection.py`) to avoid reacting to our own writes.
 - `event_bus.py` — keys in-flight tasks by `(topic, module, chat_id)`. Dispatching a new event for the same key **cancels the previous still-running handler**. Modules must tolerate cancellation mid-run.
 - `markers.py` — `Marker` (EXACT or CONTAINS match, with `priority`) + `MarkerRegistry`. On a draft, the registry picks **at most one** winner (highest priority, ties by registration order). Duplicate trigger strings across modules raise `DuplicateTriggerError` at load.
-- `module.py` — the `Module` Protocol (all handlers optional via `hasattr` checks in `app.py`) and `ModuleContext` (the `tg`, `llm`, `http`, `config`, per-module `state`, `log` handed to each module at `init`).
+- `module.py` — the `Module` Protocol (all handlers optional via `hasattr` checks in `app.py`) and `ModuleContext` (the `tg`, `llm`, `http`, `config`, per-module `state`, `log` handed to each module at `init`, plus optional `services` — `AppServices` with lazy `toggles()` / `module_config(name)` for cross-module features).
 - `config.py` — parses `config.toml` into frozen dataclasses. Env vars (`TELEGRAM_API_ID/HASH/SESSION`, `LLM_MODEL`) **override** file values. Placeholders like `api_id = 0` / `"YOUR_API_HASH"` are rejected as unset.
 - `state.py` — `state.toml`, the **runtime** source of truth for per-chat toggles. Namespaced per module (`state.for_module(name)` → `ModuleState.get/set(bucket, key, default)`). The app is the sole writer; writes are atomic (temp + `os.replace`).
 - `llm.py` — `LLMFactory` thin wrapper over `pydantic-ai` `Agent` with a timeout.
@@ -57,12 +57,14 @@ Two files, different writers (see README's config reference table):
 - `drafting` — `/draft` (one-shot, overwrites the draft; if the marker is sent, edits the sent message in place like `/fix-in-sent`) + `/auto_draft on|off` (per-chat). Debounced auto-draft with cooldown; tracks whether the user is mid-typing (`on_plain_draft_update`) to avoid clobbering their input. Optional OpenAI-compatible backend via `[modules.drafting.openai]` (`openai_drafter.py`), else the `pydantic-ai` `Pipeline`.
 - `correcting` — `/fix` (one-shot) + `/auto_fix` (pre-send) + `/auto_fix_sent` (post-send edit via Telegram edit API).
 - `media_reply` — regex-matched URLs in whitelisted chats → `yt-dlp` download → reply with the media file. `/auto_media on|off`.
-- `agent` — `/agent <instruction>`: debounced, fetches chat history, runs the LLM, posts the answer to a separate Telegram **bot** chat (`bot_sender.py`). "Send-disabled" if `bot_token_env` is unset (LLM still runs, result logged).
+- `agent` — `/agent <instruction>`: debounced, fetches chat history, runs the LLM, posts the answer to a separate Telegram **bot** chat (`bot_sender.py`). "Send-disabled" if `bot_token_env` is unset (LLM still runs, result logged). Clarification answers are read from *outgoing* MTProto messages in the bot chat; commands, settings-menu button texts and empty (service) messages are ignored there.
+- `settings_menu` — `/settings` in the agent bot chat (Bot API `getUpdates` long polling via `ctx.http`, owner-only) → native chat picker → inline ✅/❌ buttons. Toggles come from `ctx.services.toggles()` (every loaded module's `toggles()`); bot token/owner default to `[modules.agent]` via `ctx.services.module_config("agent")`. Bot API chat ids equal Telethon's marked `chat_id`s (`ui.bot_api_chat_id`). Inert without a token. Tests use `tests/fakes/bot_api.py` via the `SettingsMenuModule._api_override` hook.
 
 ### Conventions for new modules
 
 - Implement only the handlers you need (the Protocol's methods are all optional). Register triggers in `markers()`; keep `priority` higher for exact toggles, lower for `CONTAINS` instructions (see drafting: 100 for toggles, 50 for `/draft`).
 - Read defaults from `ctx.config`, persist per-chat toggles through `ctx.state`, never write `state.toml` directly.
+- Expose per-chat on/off toggles via `toggles() -> list[Toggle]` (`toggles.py`) so they show up in the settings menu. Bind `is_on` to the module's own effective-value logic (`_auto_on()`), `set` to `ctx.state.set`; don't cache toggle state in memory — read state on every event so menu changes apply immediately.
 - Add the class to `module_loader._known_modules()` and document its config in `config.example.toml`.
 - Because the bus cancels overlapping handlers per chat, treat `asyncio.CancelledError` as a normal abort (don't write partial drafts after cancellation).
 

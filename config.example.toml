@@ -233,3 +233,31 @@ agent = "/agent"
 # model       = "gpt-4o-mini"
 # instruction = "..."                  # optional; overrides default_system_prompt
 # openai_timeout_s = 120               # optional, default 120
+
+
+# ---------- Module: settings_menu ----------
+# Per-chat settings via inline buttons in the agent bot's chat. Send
+# /settings (or /start) to the bot, pick a person or group with the native
+# chat picker, then tap ✅/❌ to flip that chat's toggles (auto_fix,
+# auto_fix_sent, auto_draft, auto_media — only for loaded modules).
+# Buttons write the same state.toml entries as the in-chat markers.
+# "📋 Übersicht" lists every chat with at least one feature on.
+#
+# Uses Bot API long polling (getUpdates, only message + callback_query);
+# updates from anyone but the owner are ignored. Only ONE process may poll
+# a given bot token, and the bot must not have a webhook set.
+#
+# Inert (one log line, no polling) when the bot token env var is unset, so
+# it is safe to leave enabled.
+[modules.settings_menu]
+enabled = true
+
+# Both default to the [modules.agent] values (bot_token_env and a
+# positive target_chat_id = your own user id). Override only if needed.
+# bot_token_env = "AGENT_BOT_TOKEN"
+# owner_user_id = 123456789
+
+# Long-poll timeout and network-error backoff (seconds).
+# poll_timeout_s = 30
+# retry_initial_s = 1
+# retry_max_s = 60

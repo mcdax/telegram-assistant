@@ -60,3 +60,13 @@ def test_write_failure_raises_state_write_error_and_keeps_memory(tmp_path: Path)
             ns.set("auto_draft", "99", True)
     # In-memory change is preserved despite the write failure.
     assert ns.get("auto_draft", "99", default=None) is True
+
+
+def test_keys_lists_bucket_entries(tmp_path: Path):
+    state = RuntimeState(tmp_path / "state.toml")
+    ns = state.for_module("drafting")
+    assert ns.keys("auto_draft") == []
+    ns.set("auto_draft", "5", True)
+    ns.set("auto_draft", "-1001", False)
+    assert sorted(ns.keys("auto_draft")) == ["-1001", "5"]
+    assert state.for_module("correcting").keys("auto_draft") == []

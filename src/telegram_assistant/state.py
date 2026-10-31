@@ -46,6 +46,9 @@ class RuntimeState:
     def _get(self, module: str, bucket: str, key: str, default: Any) -> Any:
         return self._data.get(module, {}).get(bucket, {}).get(key, default)
 
+    def _keys(self, module: str, bucket: str) -> list[str]:
+        return list(self._data.get(module, {}).get(bucket, {}).keys())
+
     def _set(self, module: str, bucket: str, key: str, value: Any) -> None:
         self._data.setdefault(module, {}).setdefault(bucket, {})[key] = value
         try:
@@ -65,3 +68,6 @@ class ModuleState:
 
     def set(self, bucket: str, key: str, value: Any) -> None:
         self._root._set(self._module, bucket, key, value)
+
+    def keys(self, bucket: str) -> list[str]:
+        return self._root._keys(self._module, bucket)

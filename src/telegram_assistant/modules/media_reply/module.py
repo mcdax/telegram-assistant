@@ -18,6 +18,7 @@ from telegram_assistant.events import DraftUpdate, IncomingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
+from telegram_assistant.toggles import Toggle, chat_ids
 
 from .backends import DownloadBackend, DownloadError, get_backend
 
@@ -88,6 +89,20 @@ class MediaReplyModule:
 
     def markers(self) -> list[Marker]:
         return list(self._markers)
+
+    def toggles(self) -> list[Toggle]:
+        assert self._ctx is not None
+        state = self._ctx.state
+        return [
+            Toggle(
+                module=self.name,
+                bucket=_AUTO_MEDIA_BUCKET,
+                label="Medien-Antworten",
+                is_on=self._auto_on,
+                set=lambda chat_id, on: state.set(_AUTO_MEDIA_BUCKET, str(chat_id), on),
+                chats=lambda: chat_ids(state.keys(_AUTO_MEDIA_BUCKET)) | self._chats_seed,
+            ),
+        ]
 
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None

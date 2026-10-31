@@ -14,6 +14,7 @@ from telegram_assistant.events import DraftUpdate, Message, OutgoingMessage
 from telegram_assistant.markers import Marker, MarkerMatch, MatchKind
 from telegram_assistant.module import ModuleContext
 from telegram_assistant.state import StateWriteError
+from telegram_assistant.toggles import Toggle, chat_ids
 
 
 DEFAULT_MARKERS = {
@@ -100,6 +101,24 @@ class CorrectingModule:
 
     def markers(self) -> list[Marker]:
         return list(self._markers)
+
+    def toggles(self) -> list[Toggle]:
+        return [
+            self._toggle(_AUTO_FIX_BUCKET, "Korrektur vor dem Senden"),
+            self._toggle(_AUTO_FIX_SENT_BUCKET, "Korrektur nach dem Senden"),
+        ]
+
+    def _toggle(self, bucket: str, label: str) -> Toggle:
+        assert self._ctx is not None
+        state = self._ctx.state
+        return Toggle(
+            module=self.name,
+            bucket=bucket,
+            label=label,
+            is_on=lambda chat_id: self._is_on(chat_id, bucket),
+            set=lambda chat_id, on: state.set(bucket, str(chat_id), on),
+            chats=lambda: chat_ids(state.keys(bucket)),
+        )
 
     async def on_draft_update(self, event: DraftUpdate, match: MarkerMatch) -> None:
         assert self._ctx is not None
