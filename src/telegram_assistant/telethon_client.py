@@ -129,20 +129,21 @@ class TelethonTelegramClient:
 
     async def fetch_history(self, chat_id: int, n: int) -> list[Message]:
         out: list[Message] = []
-        sender_names: dict[int, str] = {}
+        sender_names: dict[int, tuple[str, str | None]] = {}
         async for m in self._client.iter_messages(chat_id, limit=n):
             if m.sender_id is not None and m.sender_id in sender_names:
-                sender_name = sender_names[m.sender_id]
+                sender_name, sender_username = sender_names[m.sender_id]
             else:
-                sender_name = await _sender_name(m)
+                sender_name, sender_username = await _sender_identity(m)
                 if m.sender_id is not None:
-                    sender_names[m.sender_id] = sender_name
+                    sender_names[m.sender_id] = (sender_name, sender_username)
             message_type, attachment = _describe_media(m)
             out.append(
                 Message(
                     chat_id=chat_id,
                     message_id=m.id,
                     sender=sender_name,
+                    sender_username=sender_username,
                     sender_id=int(m.sender_id) if m.sender_id is not None else None,
                     timestamp=m.date.astimezone(timezone.utc),
                     text=m.message or "",
@@ -172,12 +173,13 @@ class TelethonTelegramClient:
         return get_display_name(entity) or None
 
     async def _to_message(self, event) -> Message:
-        sender_name = await _sender_name(event)
+        sender_name, sender_username = await _sender_identity(event)
         message_type, attachment = _describe_media(event.message)
         return Message(
             chat_id=event.chat_id,
             message_id=event.message.id,
             sender=sender_name,
+            sender_username=sender_username,
             sender_id=int(event.sender_id) if event.sender_id is not None else None,
             timestamp=event.message.date.astimezone(timezone.utc),
             text=event.message.message or "",
@@ -192,8 +194,8 @@ class TelethonTelegramClient:
         return get_peer_id(peer)
 
 
-async def _sender_name(source) -> str:
-    """Prefer a person's display name / channel title over username or ID.
+async def _sender_identity(source) -> tuple[str, str | None]:
+    """Keep display name / channel title and username as separate fields.
 
     Telethon usually includes sender entities with history; resolve a missing
     entity on demand. A lookup failure must not lose the message itself.
@@ -205,7 +207,8 @@ async def _sender_name(source) -> str:
         except Exception as exc:
             log.debug("sender name unresolved id=%s: %s", source.sender_id, exc)
     name = get_display_name(sender).strip()
-    return name or str(getattr(sender, "username", None) or source.sender_id or "unknown")
+    username = getattr(sender, "username", None) or None
+    return name or str(username or source.sender_id or "unknown"), username
 
 
 def _describe_media(message) -> tuple[str, Attachment | None]:

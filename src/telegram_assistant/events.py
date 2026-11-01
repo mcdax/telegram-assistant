@@ -30,6 +30,7 @@ class Message:
     message_type: str = "text"
     attachment: Attachment | None = None
     reply_to_message_id: int | None = None
+    sender_username: str | None = None
 
 
 @dataclass(frozen=True)

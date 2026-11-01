@@ -32,6 +32,7 @@ def _msg(
     text: str,
     outgoing: bool,
     sender_id: int | None = None,
+    sender_username: str | None = None,
     message_type: str = "text",
     attachment: Attachment | None = None,
     message_id: int = 1,
@@ -45,6 +46,7 @@ def _msg(
         text=text,
         outgoing=outgoing,
         sender_id=sender_id,
+        sender_username=sender_username,
         message_type=message_type,
         attachment=attachment,
     )
@@ -143,6 +145,7 @@ def test_payload_per_message_structure():
         "chat_id": 42,
         "sender": "alice",
         "sender_id": 1001,
+        "sender_username": None,
         "is_me": False,
         "type": "text",
         "text": "hi",
@@ -263,3 +266,12 @@ def test_from_config_builds_factory_with_openai_provider(monkeypatch):
     # Sanity: the internal factory is an LLMFactory (duck-typed via agent method)
     assert hasattr(drafter, "_factory")
     assert hasattr(drafter._factory, "agent")  # type: ignore[attr-defined]
+
+
+def test_payload_preserves_all_sender_fields():
+    msg = _msg(chat_id=42, sender='Max Mustermann', sender_username='max123',
+               sender_id=1001, text='Hi', outgoing=False)
+    [item] = build_payload(chat_id=42, chat_title='Max', history=[msg], instruction='')['messages']
+    assert item['sender'] == 'Max Mustermann'
+    assert item['sender_username'] == 'max123'
+    assert item['sender_id'] == 1001

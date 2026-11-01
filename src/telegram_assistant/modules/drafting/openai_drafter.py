@@ -106,6 +106,7 @@ def build_payload(
                 "time": m.timestamp.isoformat(),
                 "chat_id": m.chat_id,
                 "sender": m.sender,
+                "sender_username": m.sender_username,
                 "sender_id": m.sender_id,
                 "is_me": m.outgoing,
                 "type": m.message_type,
