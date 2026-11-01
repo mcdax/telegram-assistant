@@ -1,18 +1,20 @@
 """Pure helpers for the meme module: agent-answer parsing, memegen.link URL
 building and the image download. No module state, so it's unit-testable.
 
-The OpenClaw agent answers with JSON only, one of::
+The configured model answers with JSON only, one of::
 
     {"kind": "template", "template_id": "drake", "lines": ["…", "…"]}
     {"kind": "custom", "image_url": "https://…", "lines": ["top", "bottom"]}
 
 Rendering is delegated to https://memegen.link (``/images/{id}/{l1}/{l2}.png``
-or ``/images/custom/{top}/{bottom}.png?background=<url>``).
+or ``/images/custom/{top}/{bottom}.png?background=<url>``); the template
+catalogue comes from ``GET {render_base}/templates/``.
 """
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -23,6 +25,8 @@ from yarl import URL
 DEFAULT_RENDER_BASE = "https://api.memegen.link"
 MAX_LINES = 8
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+TEMPLATE_NAME_CHARS = 40
+TEMPLATE_EXAMPLE_CHARS = 28
 
 _TEMPLATE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$", re.IGNORECASE)
 _FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
@@ -75,6 +79,80 @@ class MemeSpec:
             data["image_url"] = self.image_url
         data["lines"] = list(self.lines)
         return json.dumps(data, ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class Template:
+    id: str
+    name: str
+    lines: int                      # number of text fields ("n")
+    example: tuple[str, ...] = ()
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def parse_templates(data: object) -> dict[str, Template]:
+    """memegen ``/templates/`` JSON → ``{id: Template}``; malformed entries
+    are skipped. Raises ValueError if nothing usable is left."""
+    if not isinstance(data, list):
+        raise ValueError("template list is not a JSON array")
+    out: dict[str, Template] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        tid, n = item.get("id"), item.get("lines")
+        if not isinstance(tid, str) or not _TEMPLATE_ID.match(tid) or not isinstance(n, int) or n < 1:
+            continue
+        ex = item.get("example")
+        example = ex.get("text") if isinstance(ex, dict) else None
+        out[tid] = Template(
+            id=tid,
+            name=str(item.get("name") or tid),
+            lines=n,
+            example=tuple(str(x) for x in example) if isinstance(example, list) else (),
+        )
+    if not out:
+        raise ValueError("template list is empty")
+    return out
+
+
+def format_templates(templates: Mapping[str, Template]) -> str:
+    """Compact prompt listing: ``id | name | n | example / lines``, by id."""
+    return "\n".join(
+        f"{t.id} | {_clip(t.name, TEMPLATE_NAME_CHARS)} | {t.lines} | "
+        + " / ".join(_clip(x, TEMPLATE_EXAMPLE_CHARS) for x in t.example)
+        for t in sorted(templates.values(), key=lambda t: t.id)
+    )
+
+
+async def fetch_templates(
+    http: aiohttp.ClientSession, base: str = DEFAULT_RENDER_BASE, *, timeout_s: float = 30,
+) -> dict[str, Template]:
+    """Download the memegen template catalogue. Raises on any failure."""
+    url = f"{base.rstrip('/')}/templates/"
+    timeout = aiohttp.ClientTimeout(total=timeout_s)
+    async with http.get(url, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise ValueError(f"HTTP {resp.status}")
+        data = await resp.json(content_type=None)
+    return parse_templates(data)
+
+
+def validate_spec(spec: MemeSpec, templates: Mapping[str, Template]) -> None:
+    """Check a template answer against the catalogue before rendering.
+    Raises a retryable MemeError with a precise message for the agent."""
+    if spec.kind != "template":
+        return
+    tpl = templates.get(spec.template_id or "")
+    if tpl is None:
+        raise MemeError(f"unknown template_id {spec.template_id!r}")
+    if len(spec.lines) != tpl.lines:
+        raise MemeError(
+            f"template {tpl.id!r} needs exactly {tpl.lines} lines, got {len(spec.lines)}"
+        )
 
 
 def escape_line(text: str) -> str:

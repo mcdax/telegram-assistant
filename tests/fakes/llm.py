@@ -24,12 +24,18 @@ class RecordingLLM(LLMFactory):
 
 class ScriptedLLM(LLMFactory):
     """LLMFactory returning ``responses`` in order (the last one repeats);
-    records every user_text. An Exception instance in the list is raised."""
+    records every user_text (``calls``) and system prompt (``system_prompts``).
+    An Exception instance in the list is raised."""
 
     def __init__(self, *responses: str | Exception, timeout_s: int = 5) -> None:
         super().__init__(model=TestModel(), timeout_s=timeout_s)
         self._responses = list(responses)
         self.calls: list[str] = []
+        self.system_prompts: list[str] = []
+
+    def agent(self, system_prompt: str):  # type: ignore[override]
+        self.system_prompts.append(system_prompt)
+        return super().agent(system_prompt)
 
     async def run(self, agent, user_text: str) -> str:  # type: ignore[override]
         self.calls.append(user_text)

@@ -258,12 +258,13 @@ enabled = true
 # ---------- Module: meme ----------
 # "/meme <beschreibung>" typed (not sent) in any chat's draft. After the
 # debounce the draft is cleared, the last N messages of that chat plus your
-# description go to an OpenClaw agent (model "openclaw/meme", which knows the
-# memegen.link template catalogue) and it answers with JSON only:
+# description go to the configured model. The module fetches and caches the
+# memegen.link catalogue and sends rules + catalogue in a system message.
+# No custom agent, skill or daily updater is required. JSON output:
 #   {"kind":"template","template_id":"drake","lines":["…","…"]}
 #   {"kind":"custom","image_url":"https://…","lines":["top","bottom"]}
-# The meme is rendered by memegen.link (one retry on bad JSON / unknown
-# template / non-image) and a preview photo is posted to the agent bot chat
+# The meme is validated (known template, exact field count) and rendered
+# by memegen.link (one retry on bad JSON / validation / 4xx / non-image) and a preview photo is posted to the agent bot chat
 # with buttons "✅ Senden" (send it from your account into the source chat),
 # "🔁 Nochmal" (new variant) and "🎲 Anderes Template".
 #
@@ -291,6 +292,8 @@ max_line_chars = 80
 # memegen.link instance (self-hosted works too).
 render_base = "https://api.memegen.link"
 # render_timeout_s = 30
+# templates_ttl_s = 86400     # refresh catalogue after 24h; stale list on failure
+# instruction = "..."         # optional house rules appended to system prompt
 # pending_ttl_s = 3600        # how long preview buttons stay usable
 
 # Optional overrides (default: [modules.agent] values).
@@ -300,12 +303,16 @@ render_base = "https://api.memegen.link"
 [modules.meme.markers]
 meme = "/meme"
 
-# OpenAI-compatible endpoint of the OpenClaw gateway (same base_url and key
-# as [modules.agent.openai]). Without this block the top-level [llm] is used,
-# which does NOT know the template catalogue — set it up for real use.
+# Optional OpenAI-compatible backend. Omit this block to use [llm]; both
+# receive the full rules and template catalogue. Examples:
+#   OpenAI:     https://api.openai.com/v1       / your model ID
+#   OpenRouter: https://openrouter.ai/api/v1    / provider/model
+#   Ollama:     http://localhost:11434/v1      / your installed model
+#   OpenClaw:   https://<gateway>/v1           / openclaw/meme
+# In Docker, localhost refers to the container, not your host.
 # [modules.meme.openai]
-# base_url    = "https://<openclaw-gateway>/v1"
-# api_key_env = "AGENT_OPENAI_API_KEY"
-# model       = "openclaw/meme"
-# instruction = "..."          # optional, prepended to the request
+# base_url    = "https://api.openai.com/v1"
+# api_key_env = "MEME_OPENAI_API_KEY"  # set this variable in your environment
+# model       = "your-model-id"
+# instruction = "..."               # optional house rules (top-level wins)
 # openai_timeout_s = 120

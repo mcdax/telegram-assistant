@@ -12,7 +12,7 @@ A modular Telegram **userbot** — it runs under your own Telegram account (MTPr
 - **Settings menu** — *the* way to switch per-chat features: inline buttons in the agent bot's chat (`/settings`), with Telegram's native person/group picker and an overview of everything that's on.
 - **Plugin architecture** — a small framework core (Telegram client, event bus, marker registry, config/state, LLM factory) with built-in modules (`drafting`, `correcting`, `media_reply`, `agent`, `settings_menu`). Adding a feature = one module file + a config block.
 
-**Privacy:** LLM calls are the only outbound data flow. Chat content leaves your machine only to whichever provider matches `[llm].model` (Anthropic, OpenAI, Google, Ollama for local, etc. — whatever `pydantic-ai` supports). Enrichment is opt-in via a URL you control.
+**Privacy:** Chat context is sent to the configured LLM; optional meme rendering also sends caption text to memegen.link (see below). Chat content leaves your machine only to whichever provider matches `[llm].model` (Anthropic, OpenAI, Google, Ollama for local, etc. — whatever `pydantic-ai` supports). Enrichment is opt-in via a URL you control.
 
 **Design docs:** `docs/superpowers/specs/2026-04-19-telegram-assistant-design.md`.
 **Implementation plan:** `docs/superpowers/plans/2026-04-19-telegram-assistant.md`.
@@ -77,7 +77,11 @@ Runs the agent over the chat history and posts its answer to the agent bot chat 
 /meme wenn der Montag schon wieder anfängt
 ```
 
-Clears the draft, sends the description plus the last 20 messages of the chat to the OpenClaw agent `openclaw/meme` (it knows the [memegen.link](https://memegen.link) templates and answers with JSON), renders the meme via memegen.link and posts a preview to the agent bot chat. Buttons: **✅ Senden** sends the image from your account into the original chat, **🔁 Nochmal** makes a new variant, **🎲 Anderes Template** picks a different template. Needs `[modules.meme]` enabled and `settings_menu` running (it polls the bot's button taps); see `config.example.toml`.
+Clears the draft and sends the description plus the last 20 messages of the chat to your configured model. The module fetches the [memegen.link](https://memegen.link) template catalogue itself (cached for 24 hours) and supplies a complete system prompt: meme-writing rules, JSON output format, template IDs, exact field counts and examples. No custom agent, skill or scheduled template updater is needed. It validates the answer before rendering via memegen.link and posts a preview to the agent bot chat. Buttons: **✅ Senden** sends the image from your account into the original chat, **🔁 Nochmal** makes a new variant, **🎲 Anderes Template** picks a different template. Needs `[modules.meme]` enabled and `settings_menu` running (it polls the bot's button taps); see `config.example.toml`.
+
+Use any OpenAI-compatible endpoint via `[modules.meme.openai]` (OpenAI, OpenRouter, Ollama or OpenClaw), or omit that block to use `[llm]`. Set `base_url`, `model` and an environment variable containing the API key; see the example config. A failed catalogue refresh reuses the last successful list; the first request fails clearly if no list can be fetched. Invalid JSON, unknown IDs or wrong field counts get one corrective retry. Custom background images require a reachable image URL; web search is available only if your backend supplies tools. Only generic meme terms, never chat content, may be used for web search.
+
+**Meme privacy:** the selected LLM receives the description and chat context. memegen.link receives the caption text and, for custom memes, the background URL, but not the chat history.
 
 ---
 

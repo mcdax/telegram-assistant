@@ -58,6 +58,9 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch):
         "meme": {"enabled": True, "debounce_s": 0.05, "markers": {}},
     }
     with aioresponses(passthrough_unmatched=False) as m:
+        m.get("https://api.memegen.link/templates/", payload=[
+            {"id": "drake", "name": "Drake", "lines": 2, "example": {"text": ["no", "yes"]}}
+        ])
         m.get(re.compile(r"^https://api\.memegen\.link/images/drake/Montag/Freitag\.png$"),
               body=PNG, content_type="image/png")
         http = aiohttp.ClientSession()
