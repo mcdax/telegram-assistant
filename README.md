@@ -14,6 +14,8 @@ A modular Telegram **userbot** — it runs under your own Telegram account (MTPr
 
 **Privacy:** Chat context is sent to the configured LLM; optional meme rendering also sends caption text to memegen.link (see below). Chat content leaves your machine only to whichever provider matches `[llm].model` (Anthropic, OpenAI, Google, Ollama for local, etc. — whatever `pydantic-ai` supports). Enrichment is opt-in via a URL you control.
 
+Chat-history sender labels use the Telegram display name (first/last name or channel title), falling back to username, then ID when unavailable. Missing sender entities are resolved on demand; lookup failures do not discard messages. This applies to all modules using chat history.
+
 **Design docs:** `docs/superpowers/specs/2026-04-19-telegram-assistant-design.md`.
 **Implementation plan:** `docs/superpowers/plans/2026-04-19-telegram-assistant.md`.
 
