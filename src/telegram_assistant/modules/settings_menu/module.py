@@ -6,7 +6,9 @@ Telegram's native chat pickers. Picking a chat opens an inline keyboard
 with one ✅/❌ button per toggle exposed by the loaded modules
 (``Module.toggles()``); tapping flips the module's state.toml override
 (which wins over the config seed lists), then edits the keyboard in
-place. This is the only way to switch per-chat features. "📋 Übersicht" lists every chat with at least one feature on.
+place. This is the only way to switch per-chat features. Callback queries
+are first offered to other modules' ``on_bot_callback`` (e.g. meme's preview
+buttons) because this is the single process polling the bot token. "📋 Übersicht" lists every chat with at least one feature on.
 
 Transport is Bot API long polling (``getUpdates``) restricted to
 ``message`` and ``callback_query``; updates from anyone but the owner
@@ -26,7 +28,7 @@ from typing import Any
 import aiohttp
 
 from telegram_assistant.markers import Marker
-from telegram_assistant.module import ModuleContext
+from telegram_assistant.module import BotCallbackHandler, ModuleContext
 from telegram_assistant.state import StateWriteError
 from telegram_assistant.toggles import Toggle
 
@@ -193,6 +195,9 @@ class SettingsMenuModule:
         if not self._from_owner(q):
             self._ctx.log.debug("settings_menu: ignoring callback from non-owner")
             return
+        for handler in self._bot_callback_handlers():
+            if await handler(q):
+                return
         qid = q["id"]
         cb = ui.parse_callback(q.get("data") or "")
         msg = q.get("message") or {}
@@ -271,6 +276,15 @@ class SettingsMenuModule:
         if self._ctx.services is None:
             return []
         return ui.sort_toggles(self._ctx.services.toggles())
+
+    def _bot_callback_handlers(self) -> list[BotCallbackHandler]:
+        """Other modules' inline-button handlers. This module owns the only
+        getUpdates loop for the bot token, so it routes their callbacks."""
+        assert self._ctx is not None
+        services = self._ctx.services
+        if services is None or not hasattr(services, "bot_callback_handlers"):
+            return []
+        return services.bot_callback_handlers()
 
     async def _name(self, chat_id: int) -> str:
         assert self._ctx is not None

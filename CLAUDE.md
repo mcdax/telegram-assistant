@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A modular Telegram **userbot** (runs under a real user account via Telethon/MTProto, *not* the Bot API). The user types one-shot "markers" (`/draft`, `/fix`, `/agent`) into a chat's **input field** — the bot observes the synced draft, runs a feature, and writes the result back into the same draft (or edits a sent message). Per-chat automatic features (auto-draft, auto-fix, auto-fix-sent, auto-media) have **no** in-chat markers; they are toggled only via the `settings_menu` (`/settings` in the agent bot chat). The user always reviews before sending. LLM calls (via `pydantic-ai`) are the only outbound data flow.
+A modular Telegram **userbot** (runs under a real user account via Telethon/MTProto, *not* the Bot API). The user types one-shot "markers" (`/draft`, `/fix`, `/agent`, `/meme`) into a chat's **input field** — the bot observes the synced draft, runs a feature, and writes the result back into the same draft (or edits a sent message). Per-chat automatic features (auto-draft, auto-fix, auto-fix-sent, auto-media) have **no** in-chat markers; they are toggled only via the `settings_menu` (`/settings` in the agent bot chat). The user always reviews before sending. LLM calls (via `pydantic-ai`) are the only outbound data flow — plus media downloads (`media_reply`) and memegen.link render requests (`meme`).
 
 The central trick: markers are detected from Telegram's `UpdateDraftMessage` (text typed but *not* sent). If the user presses Send fast, no draft syncs and the marker is treated as a normal outgoing message and ignored.
 
@@ -58,20 +58,22 @@ Two files, different writers (see README's config reference table):
 - `correcting` — `/fix` (one-shot) + per-chat `auto_fix` (pre-send) and `auto_fix_sent` (post-send edit via Telegram edit API) toggles.
 - `media_reply` — regex-matched URLs in whitelisted chats → `yt-dlp` download → reply with the media file. Per-chat `auto_media` toggle.
 - `agent` — `/agent <instruction>`: debounced, fetches chat history, runs the LLM, posts the answer to a separate Telegram **bot** chat (`bot_sender.py`). "Send-disabled" if `bot_token_env` is unset (LLM still runs, result logged). Clarification answers are read from *outgoing* MTProto messages in the bot chat; commands, settings-menu button texts and empty (service) messages are ignored there.
-- `settings_menu` — `/settings` in the agent bot chat (Bot API `getUpdates` long polling via `ctx.http`, owner-only) → native chat picker → inline ✅/❌ buttons. Toggles come from `ctx.services.toggles()` (every loaded module's `toggles()`); bot token/owner default to `[modules.agent]` via `ctx.services.module_config("agent")`. Bot API chat ids equal Telethon's marked `chat_id`s (`ui.bot_api_chat_id`). Inert without a token. Tests use `tests/fakes/bot_api.py` via the `SettingsMenuModule._api_override` hook.
+- `meme` — `/meme <beschreibung>`: debounced like `agent`; clears the draft, sends description + last N messages (fenced as untrusted data) to the OpenClaw agent `openclaw/meme` via `[modules.meme.openai]` (no template list is sent — the agent owns it), parses its JSON (`render.parse_spec`), renders via memegen.link (`render.build_url`/`fetch_image`, one retry on bad JSON/4xx/non-image), and posts a preview photo (`bot_sender.send_photo`) with inline buttons to the agent bot chat. Button taps come in through `on_bot_callback` (see below); pending previews live in memory only, keyed by a short id in `callback_data` (`meme:<id>:s|a|t`), and expire after `pending_ttl_s`. Per-chat cooldown + already-running guard.
+- `settings_menu` — `/settings` in the agent bot chat (Bot API `getUpdates` long polling via `ctx.http`, owner-only) → native chat picker → inline ✅/❌ buttons. Toggles come from `ctx.services.toggles()` (every loaded module's `toggles()`); bot token/owner default to `[modules.agent]` via `ctx.services.module_config("agent")`. Bot API chat ids equal Telethon's marked `chat_id`s (`ui.bot_api_chat_id`). Inert without a token. Tests use `tests/fakes/bot_api.py` via the `SettingsMenuModule._api_override` hook. It owns the **only** `getUpdates` loop for the bot token (Telegram allows one poller), so other modules' inline buttons are routed through it: each owner `callback_query` is first offered to every module's optional `on_bot_callback(query) -> bool` (`ctx.services.bot_callback_handlers()`); return True to claim it, use a unique `callback_data` prefix, and keep the handler fast (spawn slow work).
 
 ### Conventions for new modules
 
-- Implement only the handlers you need (the Protocol's methods are all optional). Register one-shot action triggers in `markers()` (`CONTAINS` with an instruction remainder; priorities: `/fix` 70, `/agent` 60, `/draft` 50). Don't add in-chat on/off markers — per-chat switches go through `toggles()`.
+- Implement only the handlers you need (the Protocol's methods are all optional). Register one-shot action triggers in `markers()` (`CONTAINS` with an instruction remainder; priorities: `/fix` 70, `/agent` 60, `/meme` 55, `/draft` 50). Don't add in-chat on/off markers — per-chat switches go through `toggles()`.
 - Marker overrides are read by key from `[modules.<name>.markers]`; keys that match no registered marker name (e.g. old `auto_draft_on`) are ignored, and `ModuleLoader` logs one warning listing them.
 - Read defaults from `ctx.config`, persist per-chat toggles through `ctx.state`, never write `state.toml` directly.
 - Expose per-chat on/off toggles via `toggles() -> list[Toggle]` (`toggles.py`) so they show up in the settings menu. Bind `is_on` to the module's own effective-value logic (`_auto_on()`), `set` to `ctx.state.set`; don't cache toggle state in memory — read state on every event so menu changes apply immediately.
 - Add the class to `module_loader._known_modules()` and document its config in `config.example.toml`.
+- Need inline buttons in the bot chat? Implement `on_bot_callback` — never start a second `getUpdates` poller.
 - Because the bus cancels overlapping handlers per chat, treat `asyncio.CancelledError` as a normal abort (don't write partial drafts after cancellation).
 
 ## Testing patterns
 
-- `tests/fakes/` — `FakeTelegramClient` (in-memory drafts/sent/edits/history) and a fake LLM; use these instead of mocking Telethon. `make_message(...)` builds `Message` fixtures.
+- `tests/fakes/` — `FakeTelegramClient` (in-memory drafts/sent/edits/history) and fake LLMs (`fake_llm`, `RecordingLLM`, `ScriptedLLM` for multi-call flows); use these instead of mocking Telethon. `make_message(...)` builds `Message` fixtures.
 - `tests/unit/` mirrors the source tree; `tests/integration/` drives flows end-to-end through `App` (e.g. `test_agent_flow.py`, `test_cross_module.py`).
 
 ## Git

@@ -71,6 +71,14 @@ Replaces the input with the LLM-corrected version. Preserves meaning, tone, lang
 
 Runs the agent over the chat history and posts its answer to the agent bot chat (see `[modules.agent]` in `config.example.toml`).
 
+#### `/meme <beschreibung>`
+
+```
+/meme wenn der Montag schon wieder anfängt
+```
+
+Clears the draft, sends the description plus the last 20 messages of the chat to the OpenClaw agent `openclaw/meme` (it knows the [memegen.link](https://memegen.link) templates and answers with JSON), renders the meme via memegen.link and posts a preview to the agent bot chat. Buttons: **✅ Senden** sends the image from your account into the original chat, **🔁 Nochmal** makes a new variant, **🎲 Anderes Template** picks a different template. Needs `[modules.meme]` enabled and `settings_menu` running (it polls the bot's button taps); see `config.example.toml`.
+
 ---
 
 ## Setup guide

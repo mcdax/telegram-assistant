@@ -20,6 +20,7 @@ def _known_modules() -> dict[str, type]:
     from .modules.correcting.module import CorrectingModule
     from .modules.drafting.module import DraftingModule
     from .modules.media_reply.module import MediaReplyModule
+    from .modules.meme.module import MemeModule
     from .modules.settings_menu.module import SettingsMenuModule
 
     return {
@@ -28,6 +29,7 @@ def _known_modules() -> dict[str, type]:
         "correcting": CorrectingModule,
         "media_reply": MediaReplyModule,
         "settings_menu": SettingsMenuModule,
+        "meme": MemeModule,
     }
 
 

@@ -253,3 +253,59 @@ enabled = true
 # poll_timeout_s = 30
 # retry_initial_s = 1
 # retry_max_s = 60
+
+
+# ---------- Module: meme ----------
+# "/meme <beschreibung>" typed (not sent) in any chat's draft. After the
+# debounce the draft is cleared, the last N messages of that chat plus your
+# description go to an OpenClaw agent (model "openclaw/meme", which knows the
+# memegen.link template catalogue) and it answers with JSON only:
+#   {"kind":"template","template_id":"drake","lines":["…","…"]}
+#   {"kind":"custom","image_url":"https://…","lines":["top","bottom"]}
+# The meme is rendered by memegen.link (one retry on bad JSON / unknown
+# template / non-image) and a preview photo is posted to the agent bot chat
+# with buttons "✅ Senden" (send it from your account into the source chat),
+# "🔁 Nochmal" (new variant) and "🎲 Anderes Template".
+#
+# Bot token and target chat default to [modules.agent] (bot_token_env /
+# target_chat_id). Button taps arrive through [modules.settings_menu]'s
+# update polling — keep settings_menu enabled. Previews expire after
+# pending_ttl_s; nothing is persisted.
+[modules.meme]
+enabled = false
+
+# Wait this many seconds after the last /meme keystroke before firing.
+debounce_s = 3
+
+# Number of recent messages from the SOURCE chat passed to the agent
+# (as untrusted context).
+last_n = 20
+
+# Minimum seconds between two /meme runs in the same chat. A run that is
+# still in progress always blocks a second one for that chat.
+cooldown_s = 30
+
+# Longer caption lines from the agent are cut to this length.
+max_line_chars = 80
+
+# memegen.link instance (self-hosted works too).
+render_base = "https://api.memegen.link"
+# render_timeout_s = 30
+# pending_ttl_s = 3600        # how long preview buttons stay usable
+
+# Optional overrides (default: [modules.agent] values).
+# bot_token_env = "AGENT_BOT_TOKEN"
+# target_chat_id = 123456789
+
+[modules.meme.markers]
+meme = "/meme"
+
+# OpenAI-compatible endpoint of the OpenClaw gateway (same base_url and key
+# as [modules.agent.openai]). Without this block the top-level [llm] is used,
+# which does NOT know the template catalogue — set it up for real use.
+# [modules.meme.openai]
+# base_url    = "https://<openclaw-gateway>/v1"
+# api_key_env = "AGENT_OPENAI_API_KEY"
+# model       = "openclaw/meme"
+# instruction = "..."          # optional, prepended to the request
+# openai_timeout_s = 120

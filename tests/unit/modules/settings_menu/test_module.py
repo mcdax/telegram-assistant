@@ -33,6 +33,10 @@ class FakeServices:
     def __init__(self, toggles: list[Toggle], configs: dict[str, dict[str, Any]] | None = None) -> None:
         self._toggles = toggles
         self._configs = configs or {}
+        self.handlers: list = []
+
+    def bot_callback_handlers(self) -> list:
+        return list(self.handlers)
 
     def toggles(self) -> list[Toggle]:
         return list(self._toggles)
@@ -341,4 +345,42 @@ async def test_overview_empty(tmp_path, http, api, monkeypatch):
     await mod.handle_update(owner_text(ui.BTN_OVERVIEW))
     [send] = api.of("sendMessage")
     assert send == {"chat_id": BOT_CHAT, "text": ui.NOTHING_ON}
+    await mod.shutdown()
+
+
+# ---------- other modules' inline buttons ----------
+
+async def test_callbacks_offered_to_module_handlers_first(tmp_path, http, api, monkeypatch):
+    store: dict[int, bool] = {}
+    mod, _ = await _active(
+        tmp_path, http, api, monkeypatch,
+        toggles=[_dict_toggle("correcting", "auto_fix", "F", store)],
+    )
+    seen: list[str] = []
+
+    async def meme_handler(q):
+        seen.append(q["data"])
+        return q["data"].startswith("meme:")
+
+    mod._ctx.services.handlers.append(meme_handler)
+    await mod.handle_update(callback("meme:abcd:s"))
+    assert seen == ["meme:abcd:s"]
+    assert api.of("answerCallbackQuery") == []      # handled by the module
+
+    await mod.handle_update(callback("t:5:correcting.auto_fix"))
+    assert store == {5: True}                       # not claimed → normal toggle
+    await mod.shutdown()
+
+
+async def test_non_owner_callbacks_never_reach_module_handlers(tmp_path, http, api, monkeypatch):
+    mod, _ = await _active(tmp_path, http, api, monkeypatch)
+    seen: list[str] = []
+
+    async def handler(q):
+        seen.append(q["data"])
+        return True
+
+    mod._ctx.services.handlers.append(handler)
+    await mod.handle_update(callback("meme:abcd:s", from_id=666))
+    assert seen == []
     await mod.shutdown()

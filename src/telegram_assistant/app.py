@@ -7,6 +7,9 @@ Routing:
 - IncomingMessage → broadcast to every module's on_incoming_message.
 - OutgoingMessage → broadcast to every module's on_outgoing_message
   (for post-send features like autofixsent).
+- Bot API callback_query (inline buttons in the agent bot chat) → polled
+  only by settings_menu, which offers each query to every module's
+  on_bot_callback first (e.g. meme's preview buttons).
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ from .events import DraftUpdate, IncomingMessage, MessageEdited, OutgoingMessage
 from .llm import LLMFactory
 from .loop_protection import LoopProtection
 from .markers import MarkerRegistry
-from .module import Module, ModuleContext
+from .module import BotCallbackHandler, Module, ModuleContext
 from .module_loader import ModuleLoader
 from .state import RuntimeState
 from .telegram_client import TelegramClient
@@ -183,6 +186,9 @@ class _Services:
 
     def module_config(self, name: str) -> dict[str, Any]:
         return dict(self._app._modules_cfg.get(name) or {})
+
+    def bot_callback_handlers(self) -> list[BotCallbackHandler]:
+        return [m.on_bot_callback for m in self._app._modules if hasattr(m, "on_bot_callback")]
 
 
 class _LoopProtectingClient:

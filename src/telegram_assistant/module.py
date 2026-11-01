@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -25,6 +26,12 @@ class AppServices(Protocol):
 
     def toggles(self) -> list["Toggle"]: ...
     def module_config(self, name: str) -> dict[str, Any]: ...
+    def bot_callback_handlers(self) -> list["BotCallbackHandler"]: ...
+
+
+# Receives a Bot API ``callback_query`` dict (already owner-checked by the
+# settings_menu poller); returns True if it handled the query.
+BotCallbackHandler = Callable[[dict[str, Any]], Awaitable[bool]]
 
 
 @dataclass
@@ -52,3 +59,4 @@ class Module(Protocol):
     async def on_outgoing_message(self, event: "OutgoingMessage") -> None: ...
     async def on_draft_update(self, event: "DraftUpdate", match: "MarkerMatch") -> None: ...
     async def on_plain_draft_update(self, event: "DraftUpdate") -> None: ...
+    async def on_bot_callback(self, query: dict[str, Any]) -> bool: ...
