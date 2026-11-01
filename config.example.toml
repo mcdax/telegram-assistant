@@ -256,8 +256,9 @@ enabled = true
 
 
 # ---------- Module: meme ----------
-# "/meme <beschreibung>" typed (not sent) in any chat's draft. After the
-# debounce the draft is cleared, the last N messages of that chat plus your
+# "/meme [beschreibung]" typed (not sent) in any chat's draft. The
+# description is optional: plain /meme lets the model choose from context.
+# After the debounce the draft is cleared, the last N messages of that chat plus your
 # description go to the configured model. The module fetches and caches the
 # memegen.link catalogue and sends rules + catalogue in a system message.
 # No custom agent, skill or daily updater is required. JSON output:

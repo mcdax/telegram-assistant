@@ -18,7 +18,6 @@ from telegram_assistant.modules.meme.module import (
     BTN_AGAIN,
     BTN_OTHER,
     BTN_SEND,
-    HINT_EMPTY,
     MemeModule,
     TemplateCache,
     parse_callback,
@@ -158,15 +157,28 @@ async def test_marker_defaults(tmp_path, http, api):
     await mod.shutdown()
 
 
-async def test_empty_description_posts_hint(tmp_path, http, api):
+@pytest.mark.parametrize('marker', ['/meme', '/meme  '])
+@pytest.mark.parametrize('empty_history', [False, True])
+async def test_empty_description_generates_automatic_meme(tmp_path, http, api, memegen, marker, empty_history):
+    memegen.get(MEMEGEN, body=PNG, content_type='image/png')
     llm = ScriptedLLM(DRAKE)
     mod, tg, bot = await _start(tmp_path, http, llm)
-    tg.drafts[CHAT] = "/meme"
-    await _type(mod, "/meme  ")
-    await wait_until(lambda: bot.texts)
-    assert bot.texts == [HINT_EMPTY]
-    assert tg.drafts[CHAT] == ""
-    assert llm.calls == []
+    if empty_history:
+        tg.seed_history(CHAT, [])
+    tg.drafts[CHAT] = marker
+    await _type(mod, marker)
+    await wait_until(lambda: bot.photos)
+    assert bot.texts == []
+    assert tg.drafts[CHAT] == ''
+    [prompt] = llm.calls
+    assert 'No description was provided.' in prompt
+    assert 'choose the topic, template and joke from the chat context.' in prompt
+    assert 'choose a relatable everyday situation.' in prompt
+    assert 'UNTRUSTED DATA' in prompt
+    if not empty_history:
+        assert 'Montag schon wieder' in prompt
+    assert bot.photos[0]['caption'].endswith('Automatisch gewählt')
+    assert tg.sent == []  # still only a preview, not an automatic chat post
     await mod.shutdown()
 
 

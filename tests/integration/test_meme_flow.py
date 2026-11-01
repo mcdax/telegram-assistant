@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import aiohttp
+import pytest
 from aioresponses import aioresponses
 
 from telegram_assistant.app import App
@@ -28,7 +29,8 @@ async def _until(cond, timeout: float = 2.0) -> None:
     await asyncio.wait_for(_loop(), timeout)
 
 
-async def test_meme_end_to_end(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("marker", ["/meme wochenende", "/meme"])
+async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "123:abc")
     api = FakeBotApi()
     monkeypatch.setattr(SettingsMenuModule, "_api_override", lambda _h, _t: api)
@@ -50,7 +52,7 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch):
     tg = FakeTelegramClient()
     tg.seed_history(42, [make_message(42, "alice", "endlich Wochenende")])
     tg.names[42] = "Alice"
-    tg.drafts[42] = "/meme wochenende"
+    tg.drafts[42] = marker
     llm = RecordingLLM(SPEC)
     modules_cfg = {
         "agent": {"enabled": False, "bot_token_env": "AGENT_BOT_TOKEN", "target_chat_id": OWNER},
@@ -66,12 +68,15 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch):
         http = aiohttp.ClientSession()
         app = App(tg=tg, llm=llm, http=http, state_path=tmp_path / "state.toml")
         await app.start(modules_cfg)
-        await app.inject_draft_update(DraftUpdate(chat_id=42, text="/meme wochenende"))
+        await app.inject_draft_update(DraftUpdate(chat_id=42, text=marker))
         await app.drain()
         await _until(lambda: photos)
 
         assert tg.drafts[42] == ""
-        assert "Description (from the user): wochenende" in llm.calls[0]
+        if marker == "/meme":
+            assert "No description was provided." in llm.calls[0]
+        else:
+            assert "Description (from the user): wochenende" in llm.calls[0]
         [photo] = photos
         assert photo["chat_id"] == OWNER
         assert photo["caption"].startswith("🖼 Meme für: Alice\nTemplate: drake")

@@ -73,11 +73,13 @@ Replaces the input with the LLM-corrected version. Preserves meaning, tone, lang
 
 Runs the agent over the chat history and posts its answer to the agent bot chat (see `[modules.agent]` in `config.example.toml`).
 
-#### `/meme <beschreibung>`
+#### `/meme [beschreibung]`
 
 ```
 /meme wenn der Montag schon wieder anfängt
 ```
+
+The description is optional: typing just `/meme` lets the model choose the topic, template and joke from the chat history. With no usable context it chooses a relatable everyday situation. It still only creates a preview; sending into the source chat requires the **✅ Senden** button.
 
 Clears the draft and sends the description plus the last 20 messages of the chat to your configured model. The module fetches the [memegen.link](https://memegen.link) template catalogue itself (cached for 24 hours) and supplies a complete system prompt: meme-writing rules, JSON output format, template IDs, exact field counts and examples. No custom agent, skill or scheduled template updater is needed. It validates the answer before rendering via memegen.link and posts a preview to the agent bot chat. Buttons: **✅ Senden** sends the image from your account into the original chat, **🔁 Nochmal** makes a new variant, **🎲 Anderes Template** picks a different template. Needs `[modules.meme]` enabled and `settings_menu` running (it polls the bot's button taps); see `config.example.toml`.
 
