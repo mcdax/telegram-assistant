@@ -166,6 +166,11 @@ class SettingsMenuModule:
             return
         to = int(chat["id"])
         text = m.get("text") or ""
+        services = self._ctx.services
+        if services and hasattr(services, "bot_message_handlers"):
+            for handler in services.bot_message_handlers():
+                if await handler(m):
+                    return
         if "users_shared" in m:
             users = m["users_shared"].get("users") or []
             if not users:

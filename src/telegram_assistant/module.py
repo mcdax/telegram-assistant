@@ -27,11 +27,13 @@ class AppServices(Protocol):
     def toggles(self) -> list["Toggle"]: ...
     def module_config(self, name: str) -> dict[str, Any]: ...
     def bot_callback_handlers(self) -> list["BotCallbackHandler"]: ...
+    def bot_message_handlers(self) -> list["BotMessageHandler"]: ...
 
 
 # Receives a Bot API ``callback_query`` dict (already owner-checked by the
 # settings_menu poller); returns True if it handled the query.
 BotCallbackHandler = Callable[[dict[str, Any]], Awaitable[bool]]
+BotMessageHandler = Callable[[dict[str, Any]], Awaitable[bool]]
 
 
 @dataclass

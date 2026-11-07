@@ -177,7 +177,7 @@ async def test_empty_description_generates_automatic_meme(tmp_path, http, api, m
     assert 'UNTRUSTED DATA' in prompt
     if not empty_history:
         assert 'Montag schon wieder' in prompt
-    assert bot.photos[0]['caption'].endswith('Automatisch gewählt')
+    assert 'Automatisch gewählt' in bot.photos[0]['caption']
     assert tg.sent == []  # still only a preview, not an automatic chat post
     await mod.shutdown()
 
@@ -218,7 +218,8 @@ async def test_happy_path_posts_preview(tmp_path, http, api, memegen):
 
     [photo] = bot.photos
     assert photo["chat_id"] == OWNER
-    assert photo["caption"] == "🖼 Meme für: Alice\nTemplate: drake\n„montags-blues“"
+    assert photo["caption"].startswith("🖼 Meme für: Alice\nTemplate: drake\n„montags-blues“")
+    assert "Auf dieses Bild antworten" in photo["caption"]
     rows = photo["reply_markup"]["inline_keyboard"]
     assert [[b["text"] for b in row] for row in rows] == [[BTN_SEND], [BTN_AGAIN, BTN_OTHER]]
     assert all(len(b["callback_data"].encode()) <= 64 for row in rows for b in row)
@@ -270,7 +271,7 @@ async def test_memegen_4xx_still_retries(tmp_path, http, api, memegen):
     await _type(mod, "/meme montag")
     await wait_until(lambda: bot.photos)
     assert "memegen HTTP 404" in llm.calls[1]
-    assert bot.photos[0]["caption"].endswith("Template: drake\n„montag“")
+    assert "Template: drake\n„montag“" in bot.photos[0]["caption"]
     await mod.shutdown()
 
 
@@ -506,3 +507,102 @@ async def test_send_disabled_without_token(tmp_path, http, api, memegen, monkeyp
     await wait_until(lambda: llm.calls and not mod._is_running(CHAT))
     assert bot.photos == [] and bot.texts == []
     await mod.shutdown()
+
+
+def _reply_to(photo, text='Nur NACH Edeka, sonst kein Text.'):
+    return {
+        'message_id': 800, 'from': {'id': OWNER},
+        'chat': {'id': OWNER, 'type': 'private'}, 'text': text,
+        'reply_to_message': {'message_id': photo['message_id'],
+                             'reply_markup': photo['reply_markup']},
+    }
+
+
+async def test_reply_revises_preview_and_keeps_corrections_for_variants(tmp_path, http, api, memegen):
+    memegen.get(MEMEGEN, body=PNG, content_type='image/png', repeat=True)
+    revised = '{"kind":"template","template_id":"drake","lines":["","NACH Edeka"]}'
+    llm = ScriptedLLM(DRAKE, revised, revised, revised)
+    mod, tg, bot = await _start(tmp_path, http, llm)
+    try:
+        await mod._generate(CHAT, 'Spongebob wegen nach statt zu')
+        old = bot.photos[-1]
+        old_path = old['photo']
+        assert await mod.on_bot_message(_reply_to(old))
+        await wait_until(lambda: len(bot.photos) == 2 and not mod._is_running(CHAT))
+        assert not old_path.exists()
+        assert 'Spongebob wegen nach statt zu' in llm.calls[1]
+        assert 'Nur NACH Edeka, sonst kein Text.' in llm.calls[1]
+        assert 'Previous answer:' in llm.calls[1] and 'Montag schon wieder' in llm.calls[1]
+        assert len(mod._memes) == 1
+        assert tg.sent == []
+        assert api.of('editMessageReplyMarkup')[-1]['message_id'] == old['message_id']
+        # A second targeted change preserves the first correction in order.
+        current = bot.photos[-1]
+        assert await mod.on_bot_message(_reply_to(current, 'Text oben statt unten.'))
+        await wait_until(lambda: len(bot.photos) == 3 and not mod._is_running(CHAT))
+        [pending] = mod._memes.values()
+        assert pending.corrections == ('Nur NACH Edeka, sonst kein Text.', 'Text oben statt unten.')
+        assert 'Nur NACH Edeka' in llm.calls[2] and 'Text oben statt unten.' in llm.calls[2]
+        data = bot.photos[-1]['reply_markup']['inline_keyboard'][1][0]['callback_data']
+        await mod.on_bot_callback(callback(data, message_id=bot.photos[-1]['message_id'])['callback_query'])
+        await wait_until(lambda: len(bot.photos) == 4)
+        assert 'Nur NACH Edeka' in llm.calls[3] and 'Text oben statt unten.' in llm.calls[3]
+        assert tg.sent == []
+    finally:
+        await mod.shutdown()
+
+
+@pytest.mark.parametrize("failure", ["model", "preview"])
+async def test_reply_generation_failure_keeps_original_preview(tmp_path, http, api, memegen, failure):
+    memegen.get(MEMEGEN, body=PNG, content_type='image/png')
+    llm = ScriptedLLM(DRAKE, RuntimeError('backend unavailable') if failure == 'model' else DRAKE)
+    mod, tg, bot = await _start(tmp_path, http, llm)
+    try:
+        await mod._generate(CHAT, 'Original')
+        [pending] = mod._memes.values()
+        if failure == 'preview':
+            memegen.get(MEMEGEN, body=PNG, content_type='image/png')
+            async def fail_send(*args, **kwargs):
+                raise RuntimeError('backend unavailable')
+            mod._send_photo = fail_send
+        assert await mod.on_bot_message(_reply_to(bot.photos[-1]))
+        await wait_until(lambda: len(llm.calls) == 2 and not mod._is_running(CHAT))
+        assert mod._memes[pending.id] is pending and pending.path.exists()
+        assert api.of('editMessageReplyMarkup') == []
+        if failure == 'model':
+            assert any('backend unavailable' in text for text in bot.texts)
+        assert tg.sent == []
+    finally:
+        await mod.shutdown()
+
+
+async def test_reply_busy_and_expired_guards(tmp_path, http, api, memegen):
+    memegen.get(MEMEGEN, body=PNG, content_type='image/png')
+    llm = ScriptedLLM(DRAKE)
+    mod, tg, bot = await _start(tmp_path, http, llm)
+    try:
+        await mod._generate(CHAT, 'Original')
+        photo = bot.photos[-1]
+        # An unfinished generation blocks duplicate corrections AND send taps.
+        gate = asyncio.Event()
+        mod._start_generation(CHAT, gate.wait())
+        assert await mod.on_bot_message(_reply_to(photo))
+        data = photo['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        await mod.on_bot_callback(callback(data, message_id=photo['message_id'])['callback_query'])
+        assert len(llm.calls) == 1 and tg.sent == [] and len(mod._memes) == 1
+        gate.set()
+        await wait_until(lambda: not mod._is_running(CHAT))
+        [pending] = mod._memes.values()
+        pending.created -= 7200
+        assert await mod.on_bot_message(_reply_to(photo))
+        assert not pending.path.exists()
+        assert 'abgelaufen' in bot.texts[-1]
+        assert not await mod.on_bot_message(_reply_to(photo, '/settings'))
+        unrelated = _reply_to(photo)
+        unrelated['reply_to_message'] = {'message_id': -1}
+        assert not await mod.on_bot_message(unrelated)
+        wrong_chat = _reply_to(photo)
+        wrong_chat['chat']['id'] = 999
+        assert not await mod.on_bot_message(wrong_chat)
+    finally:
+        await mod.shutdown()

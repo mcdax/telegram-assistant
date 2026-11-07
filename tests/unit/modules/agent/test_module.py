@@ -488,3 +488,24 @@ async def test_shutdown_cancels_pending(tmp_path: Path, monkeypatch):
     await asyncio.sleep(0.2)
     assert runs == []
     await http.close()
+
+
+async def test_explicit_reply_to_other_preview_does_not_answer_clarification():
+    from telegram_assistant.events import OutgoingMessage
+    from telegram_assistant.modules.agent.module import AgentModule, AgentSession
+    from tests.fakes.telegram import make_message
+
+    mod = AgentModule()
+    mod._bot_chat_id = 7777
+    future = asyncio.get_running_loop().create_future()
+    mod._active[42] = AgentSession(
+        source_chat_id=42, history=[], instruction='Question',
+        future=future, clarify_msg_id=101,
+    )
+    message = make_message(7777, 'philipp', 'Nur NACH Edeka', outgoing=True,
+                           reply_to_message_id=999)
+    await mod.on_outgoing_message(OutgoingMessage(message))
+    assert not future.done()
+    # Plain messages still answer the one active clarification as before.
+    await mod.on_outgoing_message(OutgoingMessage(make_message(7777, 'philipp', 'Antwort', outgoing=True)))
+    assert future.result() == 'Antwort'

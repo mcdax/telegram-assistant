@@ -226,6 +226,9 @@ class AgentModule:
                 ):
                     fut.set_result(msg.text)
                     return
+            # Explicit replies to other bot messages (e.g. meme previews)
+            # must never answer an unrelated agent clarification.
+            return
 
         # Option A fallback: if exactly one session is active, resolve it.
         active = [s for s in self._active.values() if s.future is not None and not s.future.done()]

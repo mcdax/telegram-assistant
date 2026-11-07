@@ -14,7 +14,7 @@ from telegram_assistant.app import App
 from telegram_assistant.events import DraftUpdate
 from telegram_assistant.modules.meme.module import MemeModule
 from telegram_assistant.modules.settings_menu.module import SettingsMenuModule
-from tests.fakes.bot_api import OWNER, FakeBotApi, callback
+from tests.fakes.bot_api import OWNER, FakeBotApi, callback, owner_text
 from tests.fakes.llm import RecordingLLM
 from tests.fakes.telegram import FakeTelegramClient, make_message
 
@@ -29,8 +29,9 @@ async def _until(cond, timeout: float = 2.0) -> None:
     await asyncio.wait_for(_loop(), timeout)
 
 
+@pytest.mark.parametrize("revise", [False, True])
 @pytest.mark.parametrize("marker", ["/meme wochenende", "/meme"])
-async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker):
+async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker, revise):
     monkeypatch.setenv("AGENT_BOT_TOKEN", "123:abc")
     api = FakeBotApi()
     monkeypatch.setattr(SettingsMenuModule, "_api_override", lambda _h, _t: api)
@@ -40,7 +41,7 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker):
 
     async def fake_send_photo(http_, token, *, chat_id, photo, caption=None, reply_markup=None):
         photos.append({"chat_id": chat_id, "photo": photo, "caption": caption, "markup": reply_markup})
-        return 900
+        return 899 + len(photos)
 
     async def fake_send_text(http_, token, *, chat_id, text):
         raise AssertionError(f"unexpected bot text: {text}")
@@ -64,7 +65,7 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker):
             {"id": "drake", "name": "Drake", "lines": 2, "example": {"text": ["no", "yes"]}}
         ])
         m.get(re.compile(r"^https://api\.memegen\.link/images/drake/Montag/Freitag\.png$"),
-              body=PNG, content_type="image/png")
+              body=PNG, content_type="image/png", repeat=True)
         http = aiohttp.ClientSession()
         app = App(tg=tg, llm=llm, http=http, state_path=tmp_path / "state.toml")
         await app.start(modules_cfg)
@@ -80,10 +81,27 @@ async def test_meme_end_to_end(tmp_path: Path, monkeypatch, marker):
         [photo] = photos
         assert photo["chat_id"] == OWNER
         assert photo["caption"].startswith("🖼 Meme für: Alice\nTemplate: drake")
+        preview_id = 900
+        if revise:
+            reply = owner_text("Nur NACH Edeka, sonst kein Text.")
+            reply["message"]["reply_to_message"] = {"message_id": 900}
+            # A stranger may not invoke a correction, even for a known preview.
+            stranger = owner_text("Untrusted correction", from_id=999)
+            stranger["message"]["reply_to_message"] = {"message_id": 900}
+            await next(m for m in app._modules if m.name == "settings_menu").handle_update(stranger)
+            assert len(llm.calls) == 1
+            api.push(reply)
+            await _until(lambda: len(photos) == 2)
+            assert "Nur NACH Edeka, sonst kein Text." in llm.calls[1]
+            assert "Previous answer:" in llm.calls[1]
+            assert tg.sent == []
+            await api.wait_for("editMessageReplyMarkup")
+            photo = photos[-1]
+            preview_id = 901
         send_data = photo["markup"]["inline_keyboard"][0][0]["callback_data"]
 
         # The tap arrives through settings_menu's poll loop.
-        api.push(callback(send_data, message_id=900))
+        api.push(callback(send_data, message_id=preview_id))
         await api.wait_for("editMessageCaption")
         [sent] = tg.sent
         assert sent.chat_id == 42 and sent.files == [photo["photo"]]

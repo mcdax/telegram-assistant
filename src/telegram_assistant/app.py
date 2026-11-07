@@ -25,7 +25,7 @@ from .events import DraftUpdate, IncomingMessage, MessageEdited, OutgoingMessage
 from .llm import LLMFactory
 from .loop_protection import LoopProtection
 from .markers import MarkerRegistry
-from .module import BotCallbackHandler, Module, ModuleContext
+from .module import BotCallbackHandler, BotMessageHandler, Module, ModuleContext
 from .module_loader import ModuleLoader
 from .state import RuntimeState
 from .telegram_client import TelegramClient
@@ -189,6 +189,9 @@ class _Services:
 
     def bot_callback_handlers(self) -> list[BotCallbackHandler]:
         return [m.on_bot_callback for m in self._app._modules if hasattr(m, "on_bot_callback")]
+
+    def bot_message_handlers(self) -> list[BotMessageHandler]:
+        return [m.on_bot_message for m in self._app._modules if hasattr(m, "on_bot_message")]
 
 
 class _LoopProtectingClient:
