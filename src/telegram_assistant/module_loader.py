@@ -22,6 +22,7 @@ def _known_modules() -> dict[str, type]:
     from .modules.media_reply.module import MediaReplyModule
     from .modules.meme.module import MemeModule
     from .modules.settings_menu.module import SettingsMenuModule
+    from .modules.youtube_summary.module import YoutubeSummaryModule
 
     return {
         "agent": AgentModule,
@@ -30,6 +31,7 @@ def _known_modules() -> dict[str, type]:
         "media_reply": MediaReplyModule,
         "settings_menu": SettingsMenuModule,
         "meme": MemeModule,
+        "youtube_summary": YoutubeSummaryModule,
     }
 
 

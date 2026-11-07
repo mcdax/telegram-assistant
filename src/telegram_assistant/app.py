@@ -109,6 +109,11 @@ class App:
             log.debug("draft update matches our last write for chat=%s — ignored", event.chat_id)
             return
         match = self._registry.resolve(event.text)
+        # Optional debounce cancellation hook: switching to another marker
+        # must not leave the previous module's timer armed.
+        for m in self._modules:
+            if (match is None or m.name != match.module) and hasattr(m, "on_marker_lost"):
+                await m.on_marker_lost(event)
         if match is not None:
             log.debug(
                 "marker resolved: module=%s name=%s remainder=%r",

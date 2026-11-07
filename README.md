@@ -206,3 +206,34 @@ Markers must stay in your chat input field, not be sent. Type the marker, **paus
 
 **Debugging: verbose logs.**
 Set `LOG_LEVEL=DEBUG` in `.env` and restart. You'll see every event traced through the pipeline (Telethon event → app routing → module handler → LLM call → write). Very useful to understand why a marker did or didn't trigger.
+
+### YouTube summaries (`/youtube`)
+
+Enable `[modules.youtube_summary]` and provide `GEMINI_API_KEY` in the environment
+(or configure `api_key_env`). Uses Google's native Gemini video API, with the
+public YouTube URL as video input, not an OpenAI-compatible text endpoint.
+Model and request timeout are configurable; default model: `gemini-3.8-flash`.
+
+Type **without sending** in the source chat's input field:
+
+- `/youtube https://youtu.be/iw9SZgyahqg` — concise German summary.
+- `/youtube` — last YouTube link in that chat's recent history (default 30 messages).
+- `/youtube Was wird über die Kosten gesagt?` — question about that last video.
+- `/youtube <URL> Erkläre die wichtigsten Punkte ausführlicher` — custom focus.
+
+After typing stops (default 3 seconds), the marker draft is cleared and a private
+preview appears in your assistant bot chat. Only **📤 In Chat senden** publishes
+that exact summary and its source link from your account into the original chat.
+Double-clicks consume the same preview only once. Pending previews expire after
+one hour or a restart/config reload. If a send fails, check the destination chat
+before retrying: network errors may leave delivery uncertain.
+
+Requires `settings_menu` enabled with the same bot token and private owner as this
+module (defaults inherited from `modules.agent`). No second Bot API poller.
+Nothing runs automatically on incoming YouTube links. Only the selected video URL
+and explicit question go to Google; the chat history stays local. Tracking URL
+parameters are discarded. Gemini errors, missing keys, blocked or inaccessible
+videos are reported privately, with no transcript-only fallback. Video claims are
+not independently fact-checked. Output is bounded to one Telegram message, with
+an explicit truncation marker if needed. Gemini API usage may incur charges under
+your existing account quota/pricing.

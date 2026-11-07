@@ -317,3 +317,30 @@ meme = "/meme"
 # model       = "your-model-id"
 # instruction = "..."               # optional house rules (top-level wins)
 # openai_timeout_s = 120
+
+
+# ---------- Module: youtube_summary ----------
+# Type (do not send) /youtube [URL] [question] in the SOURCE chat input.
+# Without URL, select the most recent YouTube link in that chat's last_n
+# messages (including embedded link attachments). Only the URL + question
+# go to Google's native Gemini video API, never the chat history.
+# Result: private bot preview; "In Chat senden" explicitly publishes it
+# from your account into the source chat. No automatic incoming-link trigger.
+# Uses settings_menu's existing poller; same bot token and private owner required.
+# No download, transcript fallback or independent fact check. Failed/blocked
+# responses produce a private error. Summaries are bounded to Telegram's limit.
+[modules.youtube_summary]
+enabled = false
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-3.8-flash"
+debounce_s = 3
+cooldown_s = 30
+timeout_s = 180
+last_n = 30
+pending_ttl_s = 3600
+# instruction = "..."  # optional summary style appended to built-in rules
+# bot_token_env / target_chat_id default to [modules.agent].
+# Pending previews expire after TTL, config reload or restart (not persisted).
+
+[modules.youtube_summary.markers]
+youtube = "/youtube"
